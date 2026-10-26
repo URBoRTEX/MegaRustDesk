@@ -71,6 +71,13 @@ pub mod client {
         *lock = true;
     }
 
+    #[cfg(all(feature = "agent", windows))]
+    pub fn stop_agent_keyboard() {
+        KEYBOARD_HOOKED.store(false, Ordering::SeqCst);
+        if rdev::is_grabbed() { let _ = rdev::exit_grab(); }
+        *IS_GRAB_STARTED.lock().unwrap() = false;
+    }
+
     #[cfg(not(any(target_os = "android", target_os = "ios")))]
     pub fn change_grab_status(state: GrabState, keyboard_mode: &str) {
         #[cfg(feature = "flutter")]

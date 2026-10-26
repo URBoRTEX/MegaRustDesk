@@ -16,6 +16,7 @@
             include "grid.tis";
             include "header.tis";
             include "printer.tis";
+            include "agent.tis";
         </script>
 </head>
 <header>
@@ -38,6 +39,22 @@
     </div>
     <div #file-transfer-wrapper>
     </div>
+    <section #agent-panel>
+        <h2>Codex через MCP</h2>
+        <div #agent-target />
+        <div #agent-connection>Ожидание подключения Codex</div>
+        <button .button #agent-start>Разрешить Codex</button>
+        <div #agent-status>Подключение…</div>
+        <div .agent-actions>
+            <button .button .outline #agent-pause>Пауза</button>
+            <button .button .outline #agent-resume>Продолжить</button>
+            <button .button .outline #agent-stop>Стоп</button>
+        </div>
+        <button .button .outline #agent-manual>Взять управление</button>
+        <button .button .outline #agent-viewer>Скрыть просмотр</button>
+        <div .agent-help>Задачи задаются во внешнем Codex. Здесь — только подключение и управление доступом.</div>
+        <button .button .outline #agent-exit>Выйти</button>
+    </section>
     <div #msgbox />
 </body>
 

@@ -1,0 +1,56 @@
+// Existing RustDesk controls/tokens; no network endpoint or protocol UI.
+var agentPanel = $(#agent-panel);
+var agentExit = false;
+var agentViewerVisible = true;
+var agentLastError = "";
+
+function agentCommand(command) {
+    entered = false;
+    handler.leave(handler.get_keyboard_mode());
+    var error = handler.agent_control(command, "");
+    agentLastError = error || "";
+    if (error) $(#agent-status).text = error;
+}
+
+function updateAgent() {
+    try {
+        var state = JSON.parse(handler.agent_status());
+        if (!state.mode || is_file_transfer || is_port_forward) { agentPanel.style#display = "none"; return true; }
+        $(#agent-status).text = agentLastError || state.status;
+        $(#agent-target).text = handler.agent_fixture() ? "Диагностика — подключение не создано" : (state.connected ? "Подключён: " : "Нет подключения: ") + state.peer;
+        $(#agent-connection).text = !state.mcpReady ? "MCP недоступен" : (state.controllerConnected ? "Codex подключён через MCP" : "Ожидание внешнего Codex");
+        $(#agent-start).state.disabled = !state.connected || state.mode == "Running";
+        $(#agent-pause).state.disabled = state.mode != "Running";
+        $(#agent-resume).state.disabled = !state.connected || (state.mode != "Paused" && state.mode != "Manual" && state.mode != "Stopped");
+        $(#agent-stop).state.disabled = state.mode == "Stopped" || state.mode == "Ready";
+    } catch(e) { $(#agent-status).text = "Не удалось получить состояние агента"; }
+    return true;
+}
+
+if (agentPanel) {
+    agentPanel.on("click", "button", function(evt) {
+        switch (this.attributes["id"]) {
+            case "agent-start": agentCommand("start"); break;
+            case "agent-pause": agentCommand("pause"); break;
+            case "agent-resume": agentCommand("resume"); break;
+            case "agent-stop": agentCommand("stop"); break;
+            case "agent-manual": agentCommand("manual"); break;
+            case "agent-viewer":
+                agentViewerVisible = !agentViewerVisible;
+                $(#video-wrapper).style#visibility = agentViewerVisible ? "visible" : "hidden";
+                this.text = agentViewerVisible ? "Скрыть просмотр" : "Показать просмотр";
+                break;
+            case "agent-exit": agentExit = true; agentCommand("exit"); view.close(); break;
+        }
+        return true;
+    });
+    agentPanel.timer(500, updateAgent);
+    updateAgent();
+    if (!is_file_transfer && !is_port_forward) {
+        view.windowMinSize = (scaleIt(850), scaleIt(500));
+        view.on("closerequest", function() {
+            if (!agentExit) { view.windowState = View.WINDOW_MINIMIZED; return true; }
+            return false;
+        });
+    }
+}

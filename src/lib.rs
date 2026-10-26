@@ -1,4 +1,6 @@
 mod keyboard;
+#[cfg(feature = "agent")]
+pub mod agent;
 /// cbindgen:ignore
 pub mod platform;
 #[cfg(not(any(target_os = "android", target_os = "ios")))]

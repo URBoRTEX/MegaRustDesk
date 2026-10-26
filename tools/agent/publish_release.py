@@ -1,0 +1,56 @@
+"""Publish immutable preview assets from the reviewed local Windows producer."""
+import argparse
+import json
+import subprocess
+import tempfile
+from pathlib import Path
+from release import ROOT, sha, verify_prepared
+
+def gh(*args):
+    return subprocess.check_output(['gh',*map(str,args)],cwd=ROOT,text=True,encoding='utf-8').strip()
+
+def publish(notes, publish_now):
+    payload,assets=verify_prepared()
+    repo=payload['repository'];tag=payload['tag']
+    metadata=json.loads(gh('api','repos/'+repo))
+    if metadata['full_name']!=repo or metadata['private'] or not metadata['fork'] or metadata['parent']['full_name']!='rustdesk/rustdesk':
+        raise ValueError('Expected public RustDesk fork only')
+    remote_tag=gh('api',f'repos/{repo}/git/ref/tags/{tag}')
+    target=json.loads(remote_tag)['object']
+    if target['type']=='tag':
+        target=json.loads(gh('api',f'repos/{repo}/git/tags/{target["sha"]}'))['object']
+    if target['type']!='commit' or target['sha']!=payload['sourceCommit']:
+        raise ValueError('Remote release tag does not match reviewed source commit')
+    sums=ROOT/'release/SHA256SUMS.txt'
+    sums.write_text(''.join(f'{sha(p)}  {p.name}\n' for p in assets),encoding='ascii')
+    assets.append(sums)
+    releases=json.loads(gh('release','list','--repo',repo,'--limit','100','--json','tagName,isDraft'))
+    existing=next((r for r in releases if r['tagName']==tag),None)
+    if existing and not existing['isDraft']:
+        raise ValueError('Published releases are immutable; use a new version')
+    if not existing:
+        gh('release','create',tag,'--repo',repo,'--verify-tag','--draft','--prerelease','--title',f'MegaRustDesk {payload["version"]} preview','--notes-file',notes)
+    release=json.loads(gh('release','view',tag,'--repo',repo,'--json','assets,isDraft'))
+    remote_names={a['name'] for a in release['assets']}
+    if remote_names-set(p.name for p in assets):
+        raise ValueError('Draft contains unexpected assets; inspect manually')
+    for path in assets:
+        if path.name not in remote_names:
+            gh('release','upload',tag,path,'--repo',repo)
+    # Verify every stored asset before changing draft visibility. No --clobber.
+    with tempfile.TemporaryDirectory(prefix='megarustdesk-release-') as folder:
+        gh('release','download',tag,'--repo',repo,'--dir',folder)
+        for path in assets:
+            if sha(Path(folder)/path.name)!=sha(path):
+                raise ValueError('Remote uploaded asset differs: '+path.name)
+    verify_prepared()
+    if publish_now:
+        gh('release','edit',tag,'--repo',repo,'--draft=false','--prerelease')
+    print(json.dumps({'repository':repo,'tag':tag,'publishedPreview':publish_now,'remoteAssetsVerified':len(assets)}))
+
+if __name__=='__main__':
+    parser=argparse.ArgumentParser()
+    parser.add_argument('--notes-file',type=Path,required=True)
+    parser.add_argument('--publish',action='store_true')
+    args=parser.parse_args()
+    publish(args.notes_file.resolve(),args.publish)

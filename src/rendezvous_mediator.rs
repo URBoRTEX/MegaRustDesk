@@ -81,7 +81,7 @@ impl RendezvousMediator {
         let start_lan_listening = true;
         #[cfg(not(any(target_os = "android", target_os = "ios")))]
         let start_lan_listening = crate::platform::is_installed();
-        if start_lan_listening {
+        if start_lan_listening && !cfg!(feature = "agent") {
             std::thread::spawn(move || {
                 allow_err!(super::lan::start_listening());
             });
@@ -451,6 +451,12 @@ impl RendezvousMediator {
         );
 
         let mut socket = connect_tcp(&*self.host, CONNECT_TIMEOUT).await?;
+        #[cfg(feature = "agent")]
+        {
+            // This is a new coordinator stream, separate from the relay pairing stream.
+            let key = crate::get_key(true).await;
+            crate::secure_tcp(&mut socket, &key).await?;
+        }
 
         let mut msg_out = Message::new();
         let mut rr = RelayResponse {
@@ -488,7 +494,7 @@ impl RendezvousMediator {
         }
         let peer_addr_v6 = hbb_common::AddrMangle::decode(&fla.socket_addr_v6);
         let relay_server = self.get_relay_server(fla.relay_server.clone());
-        let relay = use_ws() || Config::is_proxy();
+        let relay = cfg!(feature = "agent") || use_ws() || Config::is_proxy();
         let mut socket_addr_v6 = Default::default();
         if peer_addr_v6.port() > 0 && !relay {
             socket_addr_v6 = start_ipv6(peer_addr_v6, addr, server.clone()).await;
@@ -560,7 +566,7 @@ impl RendezvousMediator {
             return Ok(());
         }
         let peer_addr_v6 = hbb_common::AddrMangle::decode(&ph.socket_addr_v6);
-        let relay = use_ws() || Config::is_proxy() || ph.force_relay;
+        let relay = cfg!(feature = "agent") || use_ws() || Config::is_proxy() || ph.force_relay;
         let mut socket_addr_v6 = Default::default();
         if peer_addr_v6.port() > 0 && !relay {
             socket_addr_v6 = start_ipv6(peer_addr_v6, peer_addr, server.clone()).await;
@@ -728,7 +734,7 @@ async fn direct_server(server: ServerPtr) {
     let mut listener = None;
     let mut port = 0;
     loop {
-        let disabled = !option2bool(
+        let disabled = cfg!(feature = "agent") || !option2bool(
             OPTION_DIRECT_SERVER,
             &Config::get_option(OPTION_DIRECT_SERVER),
         ) || option2bool("stop-service", &Config::get_option("stop-service"));

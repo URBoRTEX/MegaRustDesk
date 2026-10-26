@@ -1,0 +1,28 @@
+# Agent UI contract
+
+Baseline: RustDesk 1.4.3 Sciter, `remote.html`, `remote.tis`, `common.css`.
+Повторно используются `.button`, `.outline`, `color(bg/text/border/button/light-text)`.
+Существующие подключение, разрешения и пароль остаются в штатном интерфейсе.
+
+Уточнение владельца: встроенный чат и авторизация Codex не нужны.
+Внешний Codex CLI/MCP управляет удалённой RustDesk-сессией.
+Baseline: нативная диагностическая панель 0.1.1, проверена 2026-10-25 до изменения.
+Acceptance delta: нет task textarea, истории диалога, login и model status;
+есть целевой ПК, статус MCP, разрешение/пауза/стоп/ручное управление, hide/exit.
+Используются те же кнопки и токены; панель 230px; окно минимум 850x500.
+Просмотр использует оставшуюся область. Никаких новых UI runtime/dependencies.
+Manual input разрешён только после «Взять управление».
+Кнопка «Разрешить Codex» разрешает MCP-ввод; модель не может снять человеческую паузу.
+Закрытие просмотра скрывает его; «Выйти» останавливает задачу и весь дочерний процессный job.
+
+Acceptance: 1280x800 и 900x600, светлая/тёмная темы; disconnected/MCP idle/enabled/paused/error;
+pause/resume/stop/manual, hide/show/exit; соседние подключение и password dialog.
+Native Sciter и browser evidence записываются отдельно. Build не подтверждает UI.
+
+Updater delta 2026-10-26: baseline main 0.2.3 — left-pane 200px, padding20px,
+button/outline/lighter-text из index.css/common.css; отдельного updater нет.
+Добавляется блок версии/кнопки под существующим блоком доступа, без новой панели/чата.
+Матрица: idle/checking/current/available/downloading/verifying/ready/blocked/failed,
+light/dark, 1280x800 и 900x600; keyboard/button action; соединение/пароли рядом.
+Native accessibility/health, screenshots и browser gate фиксируются отдельно;
+изображения с настоящими паролями в evidence не включаются. Browser gate пока не проверен.

@@ -1,3 +1,21 @@
+# MegaRustDesk — Windows portable + external Codex MCP
+
+This public fork continues RustDesk 1.4.3 (`6a0da9cf09b80bba6ca731d3029210c5d839a77b`).
+It adds session-scoped MCP and signed portable updates. Codex runs separately;
+there is no bundled chat, Codex runtime, service, driver or autostart.
+
+- [Download preview releases](https://github.com/URBoRTEX/MegaRustDesk/releases)
+- [Инструкция](docs/agent/QUICKSTART.md) · [Build / corresponding source](docs/agent/BUILD.md)
+- [Update design](docs/superpowers/specs/2026-10-26-portable-updates-design.md) · [Verified scope and limitations](docs/agent/STATUS.md)
+
+First install the updater-enabled bootstrap. Future stable versions are discovered
+with the Update button. Preview releases are deliberately excluded from stable checks.
+Never distribute your `data` folder: it contains device identity and local credentials.
+Complete corresponding source, including modified submodule files, accompanies each release.
+The upstream AGPL-3.0 license and notices remain applicable; this is an independent fork.
+
+The original upstream README follows.
+
 <p align="center">
   <img src="res/logo-header.svg" alt="RustDesk - Your remote desktop"><br>
   <a href="#raw-steps-to-build">Build</a> •

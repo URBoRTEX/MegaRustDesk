@@ -23,7 +23,37 @@ fn main() {
     feature = "flutter"
 )))]
 fn main() {
+    #[cfg(feature = "agent")]
+    {
+        if !agent::update_process::startup_admitted() { eprintln!("MegaRustDesk is updating; retry after it restarts"); return; }
+        if agent::updater::early_dispatch() { return; }
+        if std::env::args().any(|a| a == "--agent-mcp") {
+            if let Err(e) = agent::run_stdio() { eprintln!("{e}"); }
+            return;
+        }
+        if let Err(e) = agent::update_process::recover_startup() {
+            platform::message_box(&e);
+            return;
+        }
+        if let Err(e) = agent::initialize() {
+            platform::message_box(&e);
+            return;
+        }
+        if std::env::args().any(|a| a == "--agent-self-test") {
+            match agent::diagnose() {
+                Ok(result) => println!("{}", result),
+                Err(error) => { eprintln!("{}", error); std::process::exit(1); }
+            }
+            return;
+        }
+    }
     if !common::global_init() {
+        return;
+    }
+    #[cfg(feature = "agent")]
+    if std::env::args().any(|a| a == "--agent-network-test") {
+        println!("{}", agent::diagnose_network());
+        common::global_clean();
         return;
     }
     #[cfg(all(windows, not(feature = "inline")))]
@@ -31,6 +61,10 @@ fn main() {
         winapi::um::shellscalingapi::SetProcessDpiAwareness(2);
     }
     if let Some(args) = crate::core_main::core_main().as_mut() {
+        #[cfg(feature = "agent")]
+        if std::env::var_os("RUSTDESK_AGENT_SECRET_RESET").is_some() {
+            platform::message_box("Хранилище ключей принадлежит другому пользователю Windows. Создана новая идентификация RustDesk; настройте доступ повторно.");
+        }
         ui::start(args);
     }
     common::global_clean();

@@ -347,6 +347,8 @@ impl Connection {
         server: super::ServerPtrWeak,
     ) {
         let _raii_id = raii::ConnectionID::new(id);
+        #[cfg(feature = "agent")]
+        let _update_guard = match crate::agent::updater::incoming() { Some(guard) => guard, None => return };
         let hash = Hash {
             salt: Config::get_salt(),
             challenge: Config::get_auto_password(6),

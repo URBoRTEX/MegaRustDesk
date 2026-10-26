@@ -1,5 +1,7 @@
 /build
 /target
+/.agent-build/
+/release/
 .vscode
 .idea
 .DS_Store

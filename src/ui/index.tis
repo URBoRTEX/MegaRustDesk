@@ -13,6 +13,8 @@ var using_public_server = handler.using_public_server();
 var software_update_url = "";
 var key_confirmed = tmp[1];
 var system_error = "";
+var agent_update_component;
+var agent_update_json = handler.is_agent_portable() ? handler.agent_update_status() : "{}";
 
 var svg_menu = <svg #menu viewBox="0 0 512 512">
 	<circle cx="256" cy="256" r="64"/>
@@ -389,6 +391,7 @@ class MyIdMenu: Reactor.Component {
             <div>Fingerprint: " + handler.get_fingerprint() + " \
             <div .link .custom-event url='https://rustdesk.com/privacy.html'>" + translate("Privacy Statement") + "</div> \
             <div .link .custom-event url='https://rustdesk.com'>" + translate("Website") + "</div> \
+              <div .link .custom-event url='http://sciter.com/'>This Application uses Sciter Engine (http://sciter.com/), copyright Terra Informatica Software, Inc.</div> \
 	    <div style='background: #2c8cff; color: white; padding: 1em; margin-top: 1em;'>Copyright &copy; 2025 Purslane Ltd.\
             <br />" + handler.get_license() + " \
             <p style='font-weight: bold'>" + translate("Slogan_tip") + "</p>\
@@ -557,6 +560,26 @@ function editDirectAccessPort() {
       });
 }
 
+class AgentUpdates: Reactor.Component {
+    function this() { agent_update_component = this; }
+    function render() {
+        var state = JSON.parse(agent_update_json);
+        var label = state.action == "apply" ? "Перезапустить и обновить" : state.action == "download" ? "Обновить до " + state.latestVersion : "Проверить обновления";
+        return <div .agent-updates>
+            <div .lighter-text>MegaRustDesk {state.version}</div>
+            {state.message ? <div .lighter-text>{state.message}</div> : ""}
+            {state.state == "downloading" ? <div .lighter-text>{state.progress}%</div> : ""}
+            <button .button .outline #agent-update-action disabled={state.action == "none"}>{label}</button>
+        </div>;
+    }
+    event click $(button#agent-update-action) {
+        var state = JSON.parse(handler.agent_update_status());
+        if (state.action == "apply") handler.agent_update_apply();
+        else if (state.action == "download") handler.agent_update_download();
+        else if (state.action == "check") handler.agent_update_check();
+    }
+}
+
 class App: Reactor.Component
 {
     function this() {
@@ -569,7 +592,7 @@ class App: Reactor.Component
             <div .app>
                     <div .left-pane>
                     <div>
-                        <div .title>{translate('Your Desktop')}</div>
+                        <div .title>Разрешить доступ к этому компьютеру</div>
                         <div .lighter-text>{translate('desk_tip')}</div>
                         <div .your-desktop>
                             <MyIdMenu />
@@ -577,7 +600,8 @@ class App: Reactor.Component
                         </div>
                         <PasswordArea />
                     </div>
-                    {!is_win || handler.is_installed() ? "": <InstallMe />}
+                    {handler.is_agent_portable() ? <AgentUpdates /> : ""}
+                    {!is_win || handler.is_installed() || handler.is_agent_portable() ? "": <InstallMe />}
                     {software_update_url ? <UpdateMe /> : ""}
                     {is_win && handler.is_installed() && !software_update_url && handler.is_installed_lower_version() ? <UpgradeMe /> : ""}
                     {is_can_screen_recording ? "": <CanScreenRecording />}
@@ -590,7 +614,7 @@ class App: Reactor.Component
                 <div .right-pane>
                     <div .right-content>
                         <div .card-connect>
-                            <div .title>{translate('Control Remote Desktop')}</div>
+                            <div .title>Управлять другим компьютером</div>
                             <ID @{this.remote_id} />
                             <div .right-buttons>
                                 <button .button .outline #file-transfer>{translate('Transfer file')}</button>
@@ -1190,6 +1214,13 @@ function checkConnectStatus() {
         if (tmp != software_update_url) {
             software_update_url = tmp;
             app.update();
+        }
+        if (handler.is_agent_portable()) {
+            tmp = handler.agent_update_status();
+            if (tmp != agent_update_json) {
+                agent_update_json = tmp;
+                if (agent_update_component) agent_update_component.update();
+            }
         }
         if (handler.recent_sessions_updated()) {
             stdout.println("recent sessions updated");

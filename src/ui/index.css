@@ -26,6 +26,16 @@ body {
     font-size: 0.9em;
 }
 
+.agent-updates {
+    padding: 20px;
+    border-top: color(border) solid 1px;
+    border-spacing: 0.5em;
+}
+.agent-updates button {
+    width: *;
+    white-space: normal;
+}
+
 .left-pane {
     width: 200px;
     height: *;

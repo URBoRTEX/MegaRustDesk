@@ -1,10 +1,20 @@
 body {
+    flow: horizontal;
     margin: 0;
     color: black;
     overflow: scroll-indicator;
 }
 
+#agent-panel { width: 230px; height: *; min-height: 0; overflow: auto; padding: 12px; border-left: 1px solid color(border); background: color(bg); color: color(text); flow: vertical; border-spacing: 8px; }
+#agent-panel h2 { margin: 0; font-size: 1.3em; }
+#agent-panel button { width: *; }
+#agent-target, #agent-connection, .agent-help { color: color(light-text); font-size: 0.9em; }
+#agent-status { min-height: 2em; }
+.agent-actions { flow: horizontal; border-spacing: 4px; }
+
 div#video-wrapper {
+    min-width: 0;
+    overflow: auto;
     size: *;
     background: #212121;
 }

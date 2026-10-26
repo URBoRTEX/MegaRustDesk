@@ -421,8 +421,8 @@ impl Client {
             NatType::from_i32(my_nat_type).unwrap_or(NatType::UNKNOWN_NAT)
         };
 
-        if !key.is_empty() && !token.is_empty() {
-            // mainly for the security of token
+        if !key.is_empty() && (!token.is_empty() || cfg!(feature = "agent")) {
+            // Agent coordinator traffic also requires encryption without account login.
             secure_tcp(&mut socket, &key)
                 .await
                 .map_err(|e| anyhow!("Failed to secure tcp: {}", e))?;
@@ -850,8 +850,8 @@ impl Client {
                 .await
                 .with_context(|| "Failed to connect to rendezvous server")?;
 
-            if !key.is_empty() && !token.is_empty() {
-                // mainly for the security of token
+            if !key.is_empty() && (!token.is_empty() || cfg!(feature = "agent")) {
+                // Match the encrypted coordinator transport used for registration.
                 secure_tcp(&mut socket, key).await?;
             }
 
@@ -1766,6 +1766,12 @@ impl Deref for LoginConfigHandler {
 }
 
 impl LoginConfigHandler {
+    #[cfg(feature = "agent")]
+    pub fn enforce_agent_isolation(&mut self) {
+        self.config.disable_clipboard.v = true;
+        self.config.enable_file_copy_paste.v = false;
+        self.force_relay = true;
+    }
     /// Initialize the login config handler.
     ///
     /// # Arguments
@@ -1845,7 +1851,8 @@ impl LoginConfigHandler {
         self.supported_encoding = Default::default();
         self.restarting_remote_device = false;
         self.force_relay =
-            config::option2bool("force-always-relay", &self.get_option("force-always-relay"))
+            cfg!(feature = "agent")
+                || config::option2bool("force-always-relay", &self.get_option("force-always-relay"))
                 || force_relay
                 || use_ws()
                 || Config::is_proxy();
@@ -3654,6 +3661,10 @@ pub trait Interface: Send + Clone + 'static + Sized {
 /// Data used by the client interface.
 #[derive(Clone)]
 pub enum Data {
+    #[cfg(feature = "agent")]
+    AgentBatch(u64, Vec<Message>),
+    #[cfg(feature = "agent")]
+    AgentRelease(Vec<Message>),
     Close,
     Login((String, String, String, bool)),
     Message(Message),

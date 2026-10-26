@@ -540,6 +540,10 @@ impl Drop for CheckTestNatType {
 }
 
 pub fn test_nat_type() {
+    if cfg!(feature = "agent") {
+        Config::set_nat_type(NatType::SYMMETRIC as _);
+        return;
+    }
     test_ipv6_sync();
     use std::sync::atomic::{AtomicBool, Ordering};
     std::thread::spawn(move || {
@@ -1033,6 +1037,7 @@ pub fn is_public(url: &str) -> bool {
 }
 
 pub fn get_udp_punch_enabled() -> bool {
+    if cfg!(feature = "agent") { return false; }
     config::option2bool(
         keys::OPTION_ENABLE_UDP_PUNCH,
         &get_local_option(keys::OPTION_ENABLE_UDP_PUNCH),
@@ -1040,6 +1045,7 @@ pub fn get_udp_punch_enabled() -> bool {
 }
 
 pub fn get_ipv6_punch_enabled() -> bool {
+    if cfg!(feature = "agent") { return false; }
     config::option2bool(
         keys::OPTION_ENABLE_IPV6_PUNCH,
         &get_local_option(keys::OPTION_ENABLE_IPV6_PUNCH),
@@ -1772,7 +1778,7 @@ pub fn verify_login(_raw: &str, _id: &str) -> bool {
 
 #[inline]
 pub fn is_udp_disabled() -> bool {
-    get_builtin_option(keys::OPTION_DISABLE_UDP) == "Y"
+    cfg!(feature = "agent") || get_builtin_option(keys::OPTION_DISABLE_UDP) == "Y"
 }
 
 // this crate https://github.com/yoshd/stun-client supports nat type

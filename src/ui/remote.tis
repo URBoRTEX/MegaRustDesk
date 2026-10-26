@@ -53,8 +53,8 @@ function adaptDisplay() {
         }
     }
     if (style != "original") {
-        var bw = $(body).box(#width, #border);
-        var bh = $(body).box(#height, #border);
+        var bw = $(#video-wrapper).box(#width, #border);
+        var bh = $(#video-wrapper).box(#height, #border);
         if (view.windowState == View.WINDOW_FULL_SCREEN) {
             bw = sw;
             bh = sh;
@@ -84,6 +84,7 @@ function adaptDisplay() {
 var entered = false;
 if (!is_file_transfer && !is_port_forward) {
     self.onKey = function(evt) {
+        if (!handler.agent_manual()) return false;
         if (!entered) return false;
         // so that arrow key not move scrollbar
         return true; 
@@ -145,6 +146,7 @@ function accWheel(v, is_x) {
 
 function handler.onMouse(evt)
 {
+    if (!handler.agent_manual()) return false;
     is_mouse_event_triggered = true;
     if (is_file_transfer || is_port_forward) return false;
     if (view.windowState == View.WINDOW_FULL_SCREEN && !dragging) {
@@ -437,7 +439,7 @@ function self.ready() {
     } else {
         centerize(w, h);
     }
-    if (!is_port_forward) connecting();
+    if (!is_port_forward && !handler.agent_fixture()) connecting();
     if (is_file_transfer) initializeFileTransfer();
     if (is_port_forward) initializePortForward();
 }
@@ -445,6 +447,7 @@ function self.ready() {
 var workarea_offset = 0;
 var size_adapted;
 handler.adaptSize = function() {
+    if (!handler.agent_manual()) { size_adapted = true; return; }
     if (size_adapted) return;
     size_adapted = true;
     var (sx, sy, sw, sh) = view.screenBox(#workarea, #rectw);

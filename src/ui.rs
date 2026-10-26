@@ -126,10 +126,11 @@ pub fn start(args: &mut [String]) {
     } else if (args[0] == "--connect"
         || args[0] == "--file-transfer"
         || args[0] == "--port-forward"
-        || args[0] == "--rdp")
-        && args.len() > 1
+        || args[0] == "--rdp"
+        || (cfg!(feature = "agent") && args[0] == "--agent-ui-test"))
+        && (args.len() > 1 || args[0] == "--agent-ui-test")
     {
-        #[cfg(windows)]
+        #[cfg(all(windows, not(feature = "agent")))]
         {
             let hw = frame.get_host().get_hwnd();
             crate::platform::windows::enable_lowlevel_keyboard(hw as _);
@@ -140,14 +141,10 @@ pub fn start(args: &mut [String]) {
             return;
         };
         let cmd = cmd.to_owned();
-        let Some(id) = iter.next() else {
-            log::error!("Failed to get id arg");
-            return;
-        };
-        let id = id.to_owned();
+        let id = iter.next().cloned().unwrap_or_default();
         let pass = iter.next().unwrap_or(&"".to_owned()).clone();
         let args: Vec<String> = iter.map(|x| x.clone()).collect();
-        frame.set_title(&id);
+        frame.set_title(if cmd == "--agent-ui-test" { "Диагностика панели агента — без подключения" } else { &id });
         frame.register_behavior("native-remote", move || {
             let handler =
                 remote::SciterSession::new(cmd.clone(), id.clone(), pass.clone(), args.clone());
@@ -163,7 +160,7 @@ pub fn start(args: &mut [String]) {
         return;
     }
     #[cfg(feature = "inline")]
-    {
+    let loaded = {
         let html = if page == "index.html" {
             inline::get_index()
         } else if page == "cm.html" {
@@ -173,16 +170,17 @@ pub fn start(args: &mut [String]) {
         } else {
             inline::get_remote()
         };
-        frame.load_html(html.as_bytes(), Some(page));
-    }
+        frame.load_html(html.as_bytes(), Some(page))
+    };
     #[cfg(not(feature = "inline"))]
-    frame.load_file(&format!(
+    let loaded = frame.load_file(&format!(
         "file://{}/src/ui/{}",
         std::env::current_dir()
             .map(|c| c.display().to_string())
             .unwrap_or("".to_owned()),
         page
     ));
+    if cfg!(feature = "agent") && !loaded { log::error!("Portable UI did not load"); return; }
     let hide_cm = *cm::HIDE_CM.lock().unwrap();
     if !args.is_empty() && args[0] == "--cm" && hide_cm {
         // run_app calls expand(show) + run_loop, we use collapse(hide) + run_loop instead to create a hidden window
@@ -190,12 +188,22 @@ pub fn start(args: &mut [String]) {
         frame.run_loop();
         return;
     }
+    #[cfg(feature = "agent")]
+    if page == "index.html" { crate::agent::update_process::mark_gui_started(); }
     frame.run_app();
 }
 
 struct UI {}
 
 impl UI {
+    fn is_agent_portable(&self) -> bool { cfg!(feature = "agent") }
+    fn agent_update_status(&self) -> String {
+        #[cfg(feature = "agent")] { return crate::agent::updater::status(); }
+        #[cfg(not(feature = "agent"))] { "{}".into() }
+    }
+    fn agent_update_check(&self) { #[cfg(feature = "agent")] crate::agent::updater::check(); }
+    fn agent_update_download(&self) { #[cfg(feature = "agent")] crate::agent::updater::download(); }
+    fn agent_update_apply(&self) { #[cfg(feature = "agent")] crate::agent::updater::apply(); }
     fn recent_sessions_updated(&self) -> bool {
         recent_sessions_updated()
     }
@@ -667,9 +675,14 @@ impl UI {
 
 impl sciter::EventHandler for UI {
     sciter::dispatch_script_call! {
+        fn is_agent_portable();
         fn t(String);
         fn get_api_server();
         fn is_xfce();
+        fn agent_update_status();
+        fn agent_update_check();
+        fn agent_update_download();
+        fn agent_update_apply();
         fn using_public_server();
         fn get_id();
         fn temporary_password();

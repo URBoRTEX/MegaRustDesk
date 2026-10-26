@@ -34,6 +34,8 @@ lazy_static::lazy_static! {
 /// * close_state  for file path when close
 #[derive(Clone, Default)]
 pub struct SciterHandler {
+    #[cfg(feature = "agent")]
+    pub agent: Arc<crate::agent::Agent>,
     element: Arc<Mutex<Option<Element>>>,
     close_state: HashMap<String, String>,
 }
@@ -265,6 +267,8 @@ impl InvokeUiSession for SciterHandler {
     }
 
     fn on_rgba(&self, _display: usize, rgba: &mut scrap::ImageRgb) {
+        #[cfg(feature = "agent")]
+        self.agent.on_frame(_display, rgba);
         VIDEO
             .lock()
             .unwrap()
@@ -273,6 +277,8 @@ impl InvokeUiSession for SciterHandler {
     }
 
     fn set_peer_info(&self, pi: &PeerInfo) {
+        #[cfg(feature = "agent")]
+        { *self.agent.displays.lock().unwrap() = pi.displays.clone(); self.agent.expected_display.store(pi.current_display as usize,std::sync::atomic::Ordering::SeqCst); }
         let mut pi_sciter = Value::map();
         pi_sciter.set_item("username", pi.username.clone());
         pi_sciter.set_item("hostname", pi.hostname.clone());
@@ -288,6 +294,8 @@ impl InvokeUiSession for SciterHandler {
     }
 
     fn set_displays(&self, displays: &Vec<DisplayInfo>) {
+        #[cfg(feature = "agent")]
+        { *self.agent.displays.lock().unwrap() = displays.clone(); }
         self.call(
             "updateDisplays",
             &make_args!(Self::make_displays_array(displays)),
@@ -299,6 +307,8 @@ impl InvokeUiSession for SciterHandler {
     }
 
     fn set_current_display(&self, _disp_idx: i32) {
+        #[cfg(feature = "agent")]
+        self.agent.expected_display.store(_disp_idx as usize,std::sync::atomic::Ordering::SeqCst);
         self.call("setCurrentDisplay", &make_args!(_disp_idx));
     }
 
@@ -315,8 +325,11 @@ impl InvokeUiSession for SciterHandler {
     }
 
     fn on_connected(&self, conn_type: ConnType) {
+        #[cfg(feature = "agent")]
+        self.agent.receive_frames.store(true,std::sync::atomic::Ordering::SeqCst);
         match conn_type {
             ConnType::DEFAULT_CONN => {
+                #[cfg(not(feature = "agent"))]
                 crate::keyboard::client::start_grab_loop();
             }
             _ => {}
@@ -416,6 +429,8 @@ impl sciter::EventHandler for SciterSession {
     }
 
     fn detached(&mut self, _root: HELEMENT) {
+        #[cfg(feature = "agent")]
+        { let _ = crate::agent::control(&self.0, "exit", ""); }
         *self.element.lock().unwrap() = None;
         self.sender.write().unwrap().take().map(|sender| {
             sender.send(Data::Close).ok();
@@ -446,7 +461,7 @@ impl sciter::EventHandler for SciterSession {
                     let site = AssetPtr::adopt(ptr as *mut video_destination);
                     log::debug!("[video] start video");
                     *VIDEO.lock().unwrap() = Some(site);
-                    self.reconnect(false);
+                    if !self.agent_fixture() { self.reconnect(false); }
                 }
             }
             BEHAVIOR_EVENTS::VIDEO_INITIALIZED => {
@@ -473,6 +488,10 @@ impl sciter::EventHandler for SciterSession {
     }
 
     sciter::dispatch_script_call! {
+        fn agent_status();
+        fn agent_fixture();
+        fn agent_control(String, String);
+        fn agent_manual();
         fn get_audit_server(String);
         fn send_note(String);
         fn is_xfce();
@@ -563,8 +582,9 @@ impl sciter::EventHandler for SciterSession {
 
 impl SciterSession {
     pub fn new(cmd: String, id: String, password: String, args: Vec<String>) -> Self {
+        let fixture = cmd == "--agent-ui-test";
         let force_relay = args.contains(&"--relay".to_string());
-        let session: Session<SciterHandler> = Session {
+        let mut session: Session<SciterHandler> = Session {
             password: password.clone(),
             args,
             server_keyboard_enabled: Arc::new(RwLock::new(true)),
@@ -585,17 +605,64 @@ impl SciterSession {
             ConnType::DEFAULT_CONN
         };
 
-        session
+        if fixture { session.args.push("--agent-ui-test".into()); }
+        else { session
             .lc
             .write()
             .unwrap()
-            .initialize(id, conn_type, None, force_relay, None, None, None);
+            .initialize(id, conn_type, None, force_relay, None, None, None); }
+
+        #[cfg(feature = "agent")]
+        {
+            session.ui_handler.agent = session.agent.clone();
+            *session.agent.peer.lock().unwrap() = session.get_id();
+            if fixture { session.agent.message("Диагностика MCP: удалённое подключение не создано."); }
+            let mut lc = session.lc.write().unwrap();
+            lc.enforce_agent_isolation();
+            drop(lc);
+            crate::agent::attach(session.clone());
+        }
 
         Self(session)
     }
 
     pub fn inner(&self) -> Session<SciterHandler> {
         self.0.clone()
+    }
+
+    fn agent_status(&self) -> String {
+        #[cfg(feature = "agent")]
+        {
+            #[cfg(windows)]
+            if self.agent.gate.lock().unwrap().mode != crate::agent::gate::Mode::Manual { crate::keyboard::client::stop_agent_keyboard(); }
+            return self.agent.status().to_string();
+        }
+        #[cfg(not(feature = "agent"))]
+        "{}".into()
+    }
+
+    fn agent_fixture(&self) -> bool { self.args.iter().any(|a|a=="--agent-ui-test") }
+
+    fn agent_control(&self, command: String, task: String) -> String {
+        if self.agent_fixture() && ["start","resume","manual","login"].contains(&command.as_str()) { return "Диагностика: подключение к компьютеру не создано".into(); }
+        #[cfg(feature = "agent")]
+        {
+            #[cfg(windows)]
+            if let Some(e) = self.element.lock().unwrap().as_ref() {
+                if command == "manual" { crate::keyboard::client::start_grab_loop(); crate::platform::windows::enable_lowlevel_keyboard(e.get_hwnd(true) as _); }
+                else { crate::platform::windows::disable_lowlevel_keyboard(e.get_hwnd(true) as _); crate::keyboard::client::stop_agent_keyboard(); }
+            }
+            return crate::agent::control(&self.0, &command, &task).err().unwrap_or_default();
+        }
+        #[cfg(not(feature = "agent"))]
+        "Агент недоступен в этой сборке".into()
+    }
+
+    fn agent_manual(&self) -> bool {
+        #[cfg(feature = "agent")]
+        { return self.agent.gate.lock().unwrap().mode == crate::agent::gate::Mode::Manual; }
+        #[cfg(not(feature = "agent"))]
+        true
     }
 
     fn get_custom_image_quality(&mut self) -> Value {

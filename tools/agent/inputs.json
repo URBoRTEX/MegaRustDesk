@@ -1,0 +1,20 @@
+{
+  "rustdesk": {
+    "tag": "1.4.3",
+    "commit": "6a0da9cf09b80bba6ca731d3029210c5d839a77b",
+    "hbbCommonCommit": "5ed0afde0841659e2fb37ae7acaddc005fa1a8d3"
+  },
+  "rust": "1.75.0",
+  "vcpkg": "120deac3062162151622ca4860575a33844ba10b",
+  "libclang": "16.0.6",
+  "codex": {
+    "mode": "external-cli-or-mcp-client",
+    "testedCli": "0.153.4",
+    "embeddedRuntime": false,
+    "transport": "stdio"
+  },
+  "sciter": {
+    "url": "https://raw.githubusercontent.com/c-smile/sciter-sdk/1c6b588cd090506d4b044dead06d7eae6e2235b7/bin.win/x64/sciter.dll",
+    "sha256": "4d97528e157c55ef1fabe9e37a9697116ab66660d7da6163f90a3a7abf80dd56"
+  }
+}

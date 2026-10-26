@@ -1,0 +1,194 @@
+diff --git a/Cargo.toml b/Cargo.toml
+index 0689f62..72a2d26 100644
+--- a/Cargo.toml
++++ b/Cargo.toml
+@@ -74,6 +74,7 @@ protobuf-codegen = { version = "3.7" }
+ 
+ [target.'cfg(target_os = "windows")'.dependencies]
+ winapi = { version = "0.3", features = [
++    "dpapi",
+     "winuser",
+     "synchapi",
+     "pdh",
+diff --git a/src/config.rs b/src/config.rs
+index 2820342..7966fb5 100644
+--- a/src/config.rs
++++ b/src/config.rs
+@@ -552,6 +552,8 @@ impl Config {
+     fn load() -> Config {
+         let mut config = Config::load_::<Config>("");
+         let mut store = false;
++        #[cfg(windows)]
++        { store |= agent_unlock_identity(&mut config); }
+         let (password, _, store1) = decrypt_str_or_original(&config.password, PASSWORD_ENC_VERSION);
+         config.password = password;
+         store |= store1;
+@@ -594,6 +596,13 @@ impl Config {
+ 
+     fn store(&self) {
+         let mut config = self.clone();
++        #[cfg(windows)]
++        if std::env::var_os("RUSTDESK_AGENT_DATA").is_some() && !config.key_pair.0.is_empty() {
++            match agent_protect_key(&config.key_pair.0, true) {
++                Ok(key) => { config.key_pair.0 = b"RDAP1".to_vec(); config.key_pair.0.extend(key); }
++                Err(_) => { log::error!("Windows could not protect the portable identity key; refusing plaintext storage"); return; }
++            }
++        }
+         config.password =
+             encrypt_str_or_original(&config.password, PASSWORD_ENC_VERSION, ENCRYPT_MAX_LEN);
+         config.enc_id = encrypt_str_or_original(&config.id, PASSWORD_ENC_VERSION, ENCRYPT_MAX_LEN);
+@@ -630,6 +639,9 @@ impl Config {
+     }
+ 
+     pub fn path<P: AsRef<Path>>(p: P) -> PathBuf {
++        if let Some(root) = std::env::var_os("RUSTDESK_AGENT_DATA") {
++            return PathBuf::from(root).join("rustdesk/config").join(p);
++        }
+         #[cfg(any(target_os = "android", target_os = "ios"))]
+         {
+             let mut path: PathBuf = APP_DIR.read().unwrap().clone().into();
+@@ -656,6 +668,9 @@ impl Config {
+ 
+     #[allow(unreachable_code)]
+     pub fn log_path() -> PathBuf {
++        if let Some(root) = std::env::var_os("RUSTDESK_AGENT_DATA") {
++            return PathBuf::from(root).join("rustdesk/log");
++        }
+         #[cfg(target_os = "macos")]
+         {
+             if let Some(path) = dirs_next::home_dir().as_mut() {
+@@ -942,14 +957,23 @@ impl Config {
+             return p.clone();
+         }
+         let mut config = Config::load_::<Config>("");
++        #[cfg(windows)]
++        let identity_reset = agent_unlock_identity(&mut config) && config.key_pair.0.is_empty();
++        #[cfg(not(windows))]
++        let identity_reset = false;
+         if config.key_pair.0.is_empty() {
+             log::info!("Generated new keypair for id: {}", config.id);
+             let (pk, sk) = sign::gen_keypair();
+             let key_pair = (sk.0.to_vec(), pk.0.into());
+             config.key_pair = key_pair.clone();
+-            std::thread::spawn(|| {
++            std::thread::spawn(move || {
+                 let mut config = CONFIG.write().unwrap();
+                 config.key_pair = key_pair;
++                if identity_reset {
++                    config.password.clear();
++                    config.key_confirmed = false;
++                    config.keys_confirmed.clear();
++                }
+                 config.store();
+             });
+         }
+@@ -1295,6 +1319,109 @@ impl Config {
+ 
+ const PEERS: &str = "peers";
+ 
++/// Decode storage protection without loading CONFIG or recursively acquiring KEY_PAIR.
++/// The return value requests persistence after a reset or legacy plaintext migration.
++#[cfg(windows)]
++fn agent_unlock_identity(config: &mut Config) -> bool {
++    if std::env::var_os("RUSTDESK_AGENT_DATA").is_none() { return false; }
++    if !config.key_pair.0.starts_with(b"RDAP1") { return !config.key_pair.0.is_empty(); }
++    match agent_protect_key(&config.key_pair.0[5..], false) {
++        Ok(key) if key.len() == sign::SECRETKEYBYTES && config.key_pair.1.len() == sign::PUBLICKEYBYTES => {
++            config.key_pair.0 = key;
++            false
++        }
++        _ => {
++            config.key_pair = Default::default();
++            config.password.clear();
++            config.key_confirmed = false;
++            config.keys_confirmed.clear();
++            std::env::set_var("RUSTDESK_AGENT_SECRET_RESET", "1");
++            true
++        }
++    }
++}
++
++#[cfg(windows)]
++fn agent_protect_key(bytes: &[u8], protect: bool) -> std::io::Result<Vec<u8>> {
++    use winapi::um::dpapi::{CryptProtectData, CryptUnprotectData, CRYPTPROTECT_UI_FORBIDDEN};
++    use winapi::um::wincrypt::CRYPT_INTEGER_BLOB;
++    let mut input = CRYPT_INTEGER_BLOB { cbData: bytes.len() as u32, pbData: bytes.as_ptr() as *mut u8 };
++    let mut output: CRYPT_INTEGER_BLOB = unsafe { std::mem::zeroed() };
++    let ok = unsafe {
++        if protect { CryptProtectData(&mut input, std::ptr::null(), std::ptr::null_mut(), std::ptr::null_mut(), std::ptr::null_mut(), CRYPTPROTECT_UI_FORBIDDEN, &mut output) }
++        else { CryptUnprotectData(&mut input, std::ptr::null_mut(), std::ptr::null_mut(), std::ptr::null_mut(), std::ptr::null_mut(), CRYPTPROTECT_UI_FORBIDDEN, &mut output) }
++    };
++    if ok == 0 { return Err(std::io::Error::last_os_error()); }
++    let result = unsafe { std::slice::from_raw_parts(output.pbData, output.cbData as usize).to_vec() };
++    unsafe { winapi::um::winbase::LocalFree(output.pbData as _); }
++    Ok(result)
++}
++
++#[cfg(all(test, windows))]
++mod agent_key_tests {
++    #[test]
++    fn reloaded_portable_identity_can_sign() {
++        use super::*;
++        let root = std::env::temp_dir().join(format!("rustdesk-agent-key-test-{}", uuid::Uuid::new_v4()));
++        assert!(!root.exists());
++        let previous_data = std::env::var_os("RUSTDESK_AGENT_DATA");
++        std::env::set_var("RUSTDESK_AGENT_DATA", &root);
++        let (public, secret) = sign::gen_keypair();
++        let mut config = Config::default();
++        config.key_pair = (secret.0.to_vec(), public.0.to_vec());
++        config.store();
++        let on_disk = Config::load_::<Config>("");
++        assert!(on_disk.key_pair.0.starts_with(b"RDAP1"));
++        *KEY_PAIR.lock().unwrap() = None;
++        let reloaded = Config::get_key_pair();
++        let valid_length = reloaded.0.len() == sign::SECRETKEYBYTES;
++        let valid_signature = valid_length && {
++            let mut key = [0; sign::SECRETKEYBYTES];
++            key.copy_from_slice(&reloaded.0);
++            let message = b"synthetic-portable-restart-check";
++            sign::verify(&sign::sign(message, &sign::SecretKey(key)), &public)
++                .map_or(false, |decoded| decoded == message)
++        };
++        let previous_reset = std::env::var_os("RUSTDESK_AGENT_SECRET_RESET");
++        let mut corrupted = Config::default();
++        corrupted.key_pair = (b"RDAP1invalid-synthetic-blob".to_vec(), public.0.to_vec());
++        corrupted.password = "synthetic-test-password".into();
++        corrupted.key_confirmed = true;
++        corrupted.keys_confirmed.insert("synthetic-server".into(), true);
++        assert!(agent_unlock_identity(&mut corrupted));
++        assert!(corrupted.key_pair.0.is_empty() && corrupted.key_pair.1.is_empty());
++        assert!(corrupted.password.is_empty() && !corrupted.key_confirmed && corrupted.keys_confirmed.is_empty());
++        assert_eq!(std::env::var("RUSTDESK_AGENT_SECRET_RESET").unwrap(), "1");
++        match previous_reset {
++            Some(value) => std::env::set_var("RUSTDESK_AGENT_SECRET_RESET", value),
++            None => std::env::remove_var("RUSTDESK_AGENT_SECRET_RESET"),
++        }
++        // Remove only the exact synthetic file created above, then empty directories.
++        let file = Config::file_("");
++        assert!(file.starts_with(&root));
++        std::fs::remove_file(file).unwrap();
++        for folder in [root.join("rustdesk/config"), root.join("rustdesk"), root.clone()] {
++            std::fs::remove_dir(folder).unwrap();
++        }
++        *KEY_PAIR.lock().unwrap() = None;
++        match previous_data {
++            Some(value) => std::env::set_var("RUSTDESK_AGENT_DATA", value),
++            None => std::env::remove_var("RUSTDESK_AGENT_DATA"),
++        }
++        assert!(valid_length, "Reloaded signing key must be 64 bytes, not the protected storage blob");
++        assert!(valid_signature, "Reloaded portable identity must retain its signing capability");
++    }
++
++    #[test]
++    fn identity_key_is_protected_for_current_windows_user() {
++        let synthetic = b"synthetic-key-for-portable-dpapi-test";
++        let encrypted = super::agent_protect_key(synthetic, true).unwrap();
++        assert_ne!(encrypted, synthetic);
++        assert_eq!(super::agent_protect_key(&encrypted, false).unwrap(), synthetic);
++        assert!(super::agent_protect_key(b"corrupted protected key", false).is_err());
++    }
++}
++
+ impl PeerConfig {
+     pub fn load(id: &str) -> PeerConfig {
+         let _lock = CONFIG.read().unwrap();

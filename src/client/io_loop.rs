@@ -342,6 +342,8 @@ impl<T: InvokeUiSession> Remote<T> {
             .lock()
             .unwrap()
             .set_disconnected(round);
+        #[cfg(feature = "agent")]
+        if _set_disconnected_ok { self.handler.agent.disconnect(); }
 
         #[cfg(not(target_os = "ios"))]
         if self.handler.is_default() && _set_disconnected_ok {
@@ -535,6 +537,17 @@ impl<T: InvokeUiSession> Remote<T> {
 
     async fn handle_msg_from_ui(&mut self, data: Data, peer: &mut Stream) -> bool {
         match data {
+            #[cfg(feature = "agent")]
+            Data::AgentBatch(epoch, messages) => {
+                for msg in messages {
+                    if !self.handler.agent.gate.lock().unwrap().permits(epoch, std::time::Instant::now()) { break; }
+                    if peer.send(&msg).await.is_err() { self.handler.agent.disconnect(); return false; }
+                }
+            }
+            #[cfg(feature = "agent")]
+            Data::AgentRelease(messages) => {
+                for msg in messages { if peer.send(&msg).await.is_err() { return false; } }
+            }
             Data::Close => {
                 self.send_close_reason(peer, "").await;
                 return false;
@@ -549,6 +562,14 @@ impl<T: InvokeUiSession> Remote<T> {
                 self.check_clipboard_file_context();
             }
             Data::Message(msg) => {
+                #[cfg(feature = "agent")]
+                match &msg.union {
+                    Some(message::Union::MouseEvent(_)) | Some(message::Union::KeyEvent(_)) => {
+                        if self.handler.agent.gate.lock().unwrap().mode != crate::agent::gate::Mode::Manual { return true; }
+                    }
+                    Some(message::Union::Clipboard(_)) | Some(message::Union::MultiClipboards(_)) => return true,
+                    _ => {}
+                }
                 match &msg.union {
                     Some(message::Union::Misc(misc)) => match misc.union {
                         Some(misc::Union::RefreshVideo(_)) => {
@@ -1422,7 +1443,7 @@ impl<T: InvokeUiSession> Remote<T> {
                     self.handler.set_cursor_position(cp);
                 }
                 Some(message::Union::Clipboard(cb)) => {
-                    if !self.handler.lc.read().unwrap().disable_clipboard.v {
+                    if !cfg!(feature = "agent") && !self.handler.lc.read().unwrap().disable_clipboard.v {
                         #[cfg(not(any(target_os = "android", target_os = "ios")))]
                         update_clipboard(vec![cb], ClipboardSide::Client);
                         #[cfg(target_os = "ios")]
@@ -1441,7 +1462,7 @@ impl<T: InvokeUiSession> Remote<T> {
                     }
                 }
                 Some(message::Union::MultiClipboards(_mcb)) => {
-                    if !self.handler.lc.read().unwrap().disable_clipboard.v {
+                    if !cfg!(feature = "agent") && !self.handler.lc.read().unwrap().disable_clipboard.v {
                         #[cfg(not(any(target_os = "android", target_os = "ios")))]
                         update_clipboard(_mcb.clipboards, ClipboardSide::Client);
                         #[cfg(target_os = "android")]
