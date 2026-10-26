@@ -56,6 +56,11 @@ UDP/IPv6 punch отключены. Системные firewall rules и увед
 
 ## Подписанный выпуск
 
+Single-instance проверки: `powershell -File tools/agent/build.ps1 -UseTaskCargoTransport -TestSingleInstance`.
+Они запускают собственные fixture-процессы в отдельном временном scope и не закрывают
+пользовательские GUI/MCP. Проверяются разные/одинаковые папки, параллельный запуск,
+защита worker-ролей и data, неверный hash и отказ дочернему запуску из старого host.
+
 Первый producer работает на локальной Windows с указанным выше toolchain.
 GitHub хранит public source/assets; готового GitHub-hosted build workflow пока нет.
 Существующему reqwest включён Rustls TLS для updater; остальные сетевые пути сохранены.

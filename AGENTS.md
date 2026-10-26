@@ -22,3 +22,5 @@
 - Публикация: tools/agent/release.py source/prepare/verify-prepared, затем publish_release.py; первый bootstrap — preview.
 - Подпись разрешена только после commit чистых release-исходников и проверки runtime_snapshot; изменённый hbb_common поставляется целиком в source ZIP плюс patch.
 - Updater заменяет только подписанный inventory, сохраняет data, блокируется при чужом MCP/активном сеансе; запрещено обходить блокировку завершением чужих процессов.
+- Singleton 0.3.2: обычный запуск заменяет только подтверждённые portable main/legacy --server/--tray того же Windows user/session, включая другие папки. MCP/viewer/helper/неизвестные роли не закрываются напрямую. При завершении прежнего main его job может закрыть его viewer.
+- Новый пакет проверяется до takeover; candidate проверяется по manifest+SHA256 и удержанному HANDLE/birth/path. Неподтверждённый EXE или родительский host требуют ручного закрытия. Проверки: build.ps1 -TestSingleInstance.

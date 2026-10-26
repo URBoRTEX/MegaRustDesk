@@ -34,3 +34,13 @@ Encoding baseline 2026-10-26: пользовательский screenshot 0.3.0 
 Acceptance: явный UTF-8 до scripts во всех inline documents; генератор не зависит
 от Windows locale; native DOM и script строки совпадают. Компоненты/токены/геометрия
 сохраняются. Реальный второй ПК и browser gate проверяются отдельно.
+
+Singleton baseline: несколько portable main из разных папок разделяют RustDesk IPC;
+новое окно может использовать старую принимающую часть. Acceptance delta: последний
+обычный запуск заменяет прежние main и legacy portable --server/--tray того же
+Windows user/session до инициализации data/Sciter/IPC. MCP, --connect, helper,
+диагностика, неизвестные режимы и другие продукты не считаются копиями main.
+При закрытии старого main его дочерние viewer могут завершиться вместе с Windows job.
+Ошибки используют существующий native message box; layout/components/tokens не меняются.
+Матрица: cold/repeat/cross-folder/concurrent launch, corrupt new package, worker modes,
+same-user/session, parent-job отказ. Native lifecycle и browser gate фиксируются отдельно.

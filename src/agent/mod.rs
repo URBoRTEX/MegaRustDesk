@@ -7,6 +7,8 @@ pub mod updater;
 mod update_manifest;
 mod update_install;
 pub mod update_process;
+#[cfg(windows)]
+pub mod single_instance;
 
 use crate::{
     client::{Data, Interface},

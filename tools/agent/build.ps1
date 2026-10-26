@@ -2,7 +2,8 @@ param(
     [string]$BuildRoot = 'C:\CodexBuilds\MegaRustDesk',
     [switch]$UseTaskCargoTransport,
     [switch]$TestSecrets,
-    [switch]$TestUpdates
+    [switch]$TestUpdates,
+    [switch]$TestSingleInstance
 )
 $ErrorActionPreference = 'Stop'
 $repoRoot = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
@@ -34,6 +35,11 @@ if ($nasmTool) { $env:PATH = $nasmTool.DirectoryName + ';' + $env:PATH }
 if ($UseTaskCargoTransport) { $env:CARGO_HOME = Join-Path $BuildRoot 'toolchain\cargo' }
 Push-Location $repoRoot
 try {
+    if ($TestSingleInstance) {
+        & (Join-Path $PSScriptRoot 'test_single_instance.ps1') -BuildRoot $BuildRoot
+        if ($LASTEXITCODE -ne 0) { throw 'Singleton tests failed' }
+        return
+    }
     if ($TestUpdates) {
         & (Join-Path $PSScriptRoot 'test_update.ps1') -BuildRoot $BuildRoot
         if ($LASTEXITCODE -ne 0) { throw 'Updater tests failed' }

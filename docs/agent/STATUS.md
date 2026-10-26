@@ -1,5 +1,23 @@
 # MegaRustDesk: фактический статус
 
+## 0.3.2 candidate — один главный экземпляр
+
+Обычный запуск/--noinstall выполняет проверку пакета, затем заменяет более ранние
+подтверждённые main/legacy --server/--tray того же Windows пользователя и сеанса.
+Проверяются product/platform manifest, настоящий SHA256 EXE, args, SID/session,
+путь и FILETIME через удержанный HANDLE. Новый EXE не закрывает более новый запуск.
+Короткий named mutex сериализует admission и освобождается до normal core startup.
+MCP/--connect/--cm/helper/диагностика/неизвестные режимы не являются main-кандидатами.
+Дочерний запуск старого host отклоняется; закрытие старого main может закрыть его viewer job.
+При несовпадении hash takeover останавливается до закрытия любого экземпляра.
+
+Пять standalone/native проверок прошли: whitelist ролей; mismatch сохраняет старый
+процесс; дочерний запуск сохраняет parent и другие host; разные и одинаковая папки
+сохраняют MCP/viewer/other product и synthetic data; параллельный запуск оставляет один main.
+RED→GREEN сохранены для whitelist и настоящего случая mismatched EXE. Независимое
+review после исправления сравнения SHA не нашло остаточных P1/P2.
+Сборка и packaged acceptance выполняются. Связь со вторым физическим ПК ещё не подтверждена.
+
 ## 0.3.1 candidate — кодировка и неполное обновление
 
 Generated UTF-8 строки не имели явного charset; Sciter с Windows-1251 воспроизводит

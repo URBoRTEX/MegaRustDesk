@@ -35,6 +35,14 @@ fn main() {
             platform::message_box(&e);
             return;
         }
+        #[cfg(windows)]
+        let _main_admission = if agent::single_instance::is_main_args(&std::env::args().skip(1).collect::<Vec<_>>()) {
+            match agent::single_instance::enter() {
+                Ok(Some(guard)) => Some(guard),
+                Ok(None) => return,
+                Err(error) => { platform::message_box(&error); return; }
+            }
+        } else { None };
         if let Err(e) = agent::initialize() {
             platform::message_box(&e);
             return;
