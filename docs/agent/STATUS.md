@@ -16,7 +16,13 @@ MCP/--connect/--cm/helper/диагностика/неизвестные режи
 сохраняют MCP/viewer/other product и synthetic data; параллельный запуск оставляет один main.
 RED→GREEN сохранены для whitelist и настоящего случая mismatched EXE. Независимое
 review после исправления сравнения SHA не нашло остаточных P1/P2.
-Сборка и packaged acceptance выполняются. Связь со вторым физическим ПК ещё не подтверждена.
+Release build прошёл за 6m25s; runtime snapshot совпал после компиляции.
+Portable self-test прошёл в двух путях, включая кириллицу, без developer PATH;
+13 MCP tools/binding и запрет смены цели подтверждены. Producer 6 tests и encoding
+2 tests прошли. Подпись и inventory 803 файлов проверяются перед публикацией.
+Native process fixtures и packaged CLI отделены от Sciter UI/browser/clean-Windows
+приёмки. Итоги реального запуска и установки сохраняются в ignored .agent-build receipts.
+Связь со вторым физическим ПК ещё не подтверждена; общий buildVerified остаётся false.
 
 ## 0.3.1 candidate — кодировка и неполное обновление
 
