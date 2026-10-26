@@ -226,6 +226,35 @@ pub fn file_hash(path: &Path) -> Result<String, String> {
     }
     Ok(hex(&hash.finalize()))
 }
+pub fn verify_installation(root: &Path, executable: &Path, current: &str) -> Result<(), String> {
+    let path = root.join("manifest.json");
+    plain_path(&path)?;
+    if fs::metadata(&path)
+        .map_err(|_| "Не найден manifest.json. Распакуйте приложение целиком")?
+        .len()
+        > 524288
+    {
+        return Err("Manifest установки превышает лимит".into());
+    }
+    let manifest: Value = serde_json::from_slice(&fs::read(&path).map_err(|e| e.to_string())?)
+        .map_err(|_| "Повреждён manifest.json")?;
+    if manifest["product"] != "RustDesk Agent Portable"
+        || manifest["platform"] != "windows-x64"
+        || manifest["version"] != current
+    {
+        return Err("В папке смешаны версии приложения. Закройте приложение и использующий его Codex/MCP, затем распакуйте обновление целиком; сохраните свою data".into());
+    }
+    for (name, path) in [
+        ("RustDesk-Agent.exe", executable.to_path_buf()),
+        ("sciter.dll", root.join("sciter.dll")),
+    ] {
+        plain_path(&path)?;
+        if manifest["files"][name].as_str() != Some(file_hash(&path)?.as_str()) {
+            return Err(format!("Файл {name} не соответствует версии {current}. Обновление распаковано не полностью. Закройте приложение и использующий его Codex/MCP, затем распакуйте архив целиком; сохраните свою data"));
+        }
+    }
+    Ok(())
+}
 fn inventory(path: &Path, manifest: &Manifest, destination: Option<&Path>) -> Result<(), String> {
     let file = fs::File::open(path).map_err(|e| e.to_string())?;
     let mut archive = zip::ZipArchive::new(file).map_err(|_| "Не удалось открыть update ZIP")?;
@@ -340,6 +369,35 @@ mod tests {
     #[cfg_attr(not(update_standalone), test)]
     fn signed_newer_release_is_accepted() {
         assert_eq!(signed(&sample(), "0.2.3").unwrap().version, "0.3.0");
+    }
+    #[cfg_attr(not(update_standalone), test)]
+    fn partially_extracted_installation_is_rejected() {
+        let root = std::env::temp_dir().join(format!(
+            "megarustdesk-integrity-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::create_dir(&root).unwrap();
+        let exe = root.join("RustDesk-Agent.exe");
+        fs::write(&exe, b"new-exe").unwrap();
+        fs::write(root.join("sciter.dll"), b"dll").unwrap();
+        let manifest = json!({"product":"RustDesk Agent Portable","platform":"windows-x64","version":"0.3.0","files":{"RustDesk-Agent.exe":file_hash(&exe).unwrap(),"sciter.dll":file_hash(&root.join("sciter.dll")).unwrap()}});
+        fs::write(root.join("manifest.json"), manifest.to_string()).unwrap();
+        assert!(verify_installation(&root, &exe, "0.3.0").is_ok());
+        fs::write(&exe, b"old-exe").unwrap();
+        assert!(
+            verify_installation(&root, &exe, "0.3.0").is_err(),
+            "Mixed EXE accepted"
+        );
+        fs::write(&exe, b"new-exe").unwrap();
+        assert!(
+            verify_installation(&root, &exe, "0.3.1").is_err(),
+            "Mixed version accepted"
+        );
+        fs::remove_dir_all(root).unwrap();
     }
     #[cfg_attr(not(update_standalone), test)]
     fn unsigned_tampered_wrong_key_are_rejected() {
@@ -486,6 +544,10 @@ mod tests {
     #[cfg(update_standalone)]
     pub fn run_all() {
         let tests: &[(&str, fn())] = &[
+            (
+                "partially_extracted_installation_is_rejected",
+                partially_extracted_installation_is_rejected,
+            ),
             (
                 "signed_newer_release_is_accepted",
                 signed_newer_release_is_accepted,

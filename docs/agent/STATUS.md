@@ -1,5 +1,27 @@
 # MegaRustDesk: фактический статус
 
+## 0.3.1 candidate — кодировка и неполное обновление
+
+Generated UTF-8 строки не имели явного charset; Sciter с Windows-1251 воспроизводит
+искажение HTML и TIS literal. Во все inline documents добавлен UTF-8 meta до scripts;
+все чтения генератора используют UTF-8 независимо от locale Windows.
+Regression: генератор с принудительным CP1251 default ранее терял русские строки,
+после исправления сохраняет их. Native Sciter A/B проверяет DOM и TIS literal.
+
+До запуска GUI/принимающей стороны проверяются compiled version, manifest и hashes
+EXE/Sciter. Смешанные после распаковки версии показывают явную ошибку до загрузки DLL
+и data. Тест реального случая old EXE + new manifest прошёл RED → GREEN.
+
+При текущей диагностике на основном ПК manifest обновлён до 0.3.0, но настоящий EXE
+по SHA совпадает с 0.2.3. Использующие его внешние MCP-процессы не завершались.
+Проверенный отдельный viewer 0.3.0 получает RelayResponse и открывает relay TCP,
+затем ждёт ответ peer handshake 18 секунд до timeout. Ошибка соединения не объявляется
+исправленной этим текстовым патчем. Перезапуск принимающего ПК и receiver evidence ожидаются.
+Release build 0.3.1 прошёл за 6m28s, runtime snapshot совпал. 8 security + 8 installer,
+6 producer и 2 encoding regression tests прошли. Portable self-test в двух путях прошёл,
+включая кириллицу, без developer PATH; глобальные PATH/Codex metadata не изменились.
+0.3.1 остаётся локальным candidate: новое соединение со вторым ПК ещё не подтверждено.
+
 ## 0.3.0 preview — подписанные portable-обновления
 
 Спецификация согласована владельцем; реализация добавлена в update_manifest.rs,

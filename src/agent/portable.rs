@@ -10,6 +10,11 @@ pub fn root() -> Result<PathBuf, String> {
 
 pub fn initialize() -> Result<(), String> {
     let root = root()?;
+    super::update_manifest::verify_installation(
+        &root,
+        &std::env::current_exe().map_err(|e| e.to_string())?,
+        super::updater::product_version(),
+    )?;
     // Configure the absolute DLL path before any RustDesk/Sciter value is initialized.
     // Windows' hardened DLL search intentionally excludes PATH and the working directory.
     if !std::env::args().any(|a| a == "--agent-self-test") {
@@ -22,7 +27,11 @@ pub fn initialize() -> Result<(), String> {
     std::env::set_var("RUSTDESK_AGENT_DATA", &data);
     *hbb_common::config::APP_NAME.write().unwrap() = "RustDeskAgent".into();
     // Hard settings prevent accidental installation through the inherited RustDesk UI.
-    for key in ["disable-installation", "disable-check-update", "disable-tcp-listen"] {
+    for key in [
+        "disable-installation",
+        "disable-check-update",
+        "disable-tcp-listen",
+    ] {
         hbb_common::config::HARD_SETTINGS
             .write()
             .unwrap()
@@ -31,7 +40,10 @@ pub fn initialize() -> Result<(), String> {
     // Portable access uses outbound relay connections instead of requesting an
     // inbound Windows Firewall exception. Never changes the firewall policy.
     for key in ["direct-server", "enable-lan-discovery"] {
-        hbb_common::config::OVERWRITE_SETTINGS.write().unwrap().insert(key.into(), "N".into());
+        hbb_common::config::OVERWRITE_SETTINGS
+            .write()
+            .unwrap()
+            .insert(key.into(), "N".into());
     }
     hbb_common::config::LocalConfig::set_option("lang".into(), "ru".into());
     #[cfg(windows)]
@@ -52,7 +64,8 @@ unsafe fn create_process_job() -> Result<(), String> {
         ));
     }
     let mut limits: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = std::mem::zeroed();
-    limits.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE | JOB_OBJECT_LIMIT_BREAKAWAY_OK;
+    limits.BasicLimitInformation.LimitFlags =
+        JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE | JOB_OBJECT_LIMIT_BREAKAWAY_OK;
     if SetInformationJobObject(
         job,
         JobObjectExtendedLimitInformation,

@@ -26,3 +26,11 @@ button/outline/lighter-text из index.css/common.css; отдельного upda
 light/dark, 1280x800 и 900x600; keyboard/button action; соединение/пароли рядом.
 Native accessibility/health, screenshots и browser gate фиксируются отдельно;
 изображения с настоящими паролями в evidence не включаются. Browser gate пока не проверен.
+
+Encoding baseline 2026-10-26: пользовательский screenshot 0.3.0 — direct HTML/TIS
+русские строки искажены, native translated strings читаемы. Generated HTML содержит
+корректный UTF-8, charset отсутствует. Native Sciter A/B: windows-1251 даёт те же
+начальные codepoints 1056,160,1056,176; UTF-8 meta сохраняет HTML и TIS literal.
+Acceptance: явный UTF-8 до scripts во всех inline documents; генератор не зависит
+от Windows locale; native DOM и script строки совпадают. Компоненты/токены/геометрия
+сохраняются. Реальный второй ПК и browser gate проверяются отдельно.
