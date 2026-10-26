@@ -15,11 +15,29 @@ Producer: 6 тестов contaminated ZIP, inventory/hash/Windows paths и sourc
 Независимое review исправило recovery в mapped EXE, crash journal temp, partial backup
 и restart до unlock. Повторное review process diff не обнаружило P1/P2.
 
-Product build и финальная проверка артефактов выполняются; точные SHA и QA receipts
-хранятся локально в ignored .agent-build. `buildVerified=false`: обычный browser не
+Product release build прошёл на Rust 1.75 за 5m54s; snapshot исходников после компиляции
+совпал. Portable self-test прошёл в двух путях, включая кириллицу, без developer PATH;
+13 MCP tools, binding и запрет смены цели подтверждены. Глобальные PATH/Codex metadata
+не изменились. Реальный EXE подтвердил version 0.3.0 и подпись/inventory 803 файлов.
+
+QA helper действительно установил 0.2.3 → 0.3.0, exit0; новая GUI подтвердила nonce health,
+показала «Обновление установлено», synthetic data сохранилась. Runtime MCP при активном
+update lock и незавершённом recovery отклонён до старта без вывода JSON/данных.
+Первый QA harness получил TimeoutExpired из-за унаследованных stdout pipes GUI;
+повторный запуск с null stdout/stderr прошёл. Это ошибка harness, не признак зависания helper.
+
+Ограничения: native accessibility видит версию/кнопку/результат, но click по index
+отвергнут Computer Use как unavailable; interaction/viewports/themes не подтверждены.
+Пользователь остановил управление интерфейсом Esc; GUI recovery после искусственного
+прерывания не запускался, соответствующий QA snapshot сохранён. Unit crash recovery прошёл.
+Network startup diagnostic exit -1: уже работающий RustDesk держит общий IPC query pipe
+(os error5). Чужие процессы не завершались; изолированный network gate 0.3.0 не подтверждён.
+
+Точные SHA и QA receipts хранятся локально в ignored .agent-build. `buildVerified=false`: browser не
 исполняет Sciter/TIS, browser gate UNVERIFIED; clean Windows VM и полный сценарий
 на втором ПК не подтверждены. GitHub-hosted CI не настроен: producer пока локальная Windows.
-Публичный fork создан; assets пока не опубликованы. Реальный ID второго ПК неизвестен;
+Публичный fork URBoRTEX/MegaRustDesk создан; 0.3.0 предназначен для preview-публикации
+с binary/source/manifest/signature/checksums. Реальный ID второго ПК неизвестен;
 его отсутствие окна и соединение этим updater-патчем не объявляются исправленными.
 
 Ниже сохранена история предыдущей проверенной 0.2.3 и диагностики поставки.

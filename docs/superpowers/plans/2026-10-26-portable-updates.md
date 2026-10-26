@@ -32,31 +32,31 @@
 **Files:** tools/agent/release_config.json, release.py, test_release.py, package.py, verify_package.py; src/agent/update_manifest.rs.
 **Interfaces:** config version/repository/public_key; verify_manifest(bytes, signature, key, current) -> Manifest; validate/extract_archive(path, manifest, destination).
 
-- [ ] Добавить отрицательные fixture tests для signature/hash/repo/version, contaminated ZIP, traversal/case/link/limits.
-- [ ] Проверить RED; реализовать общий strict inventory и подпись точных manifest bytes.
-- [ ] Генерировать DPAPI signing key только в ignored local signing path; публичный ключ вне секретов в config.
-- [ ] Единая версия UI/package/CLI; source identity включает exact HEAD/submodule/patch/locks.
-- [ ] Проверить GREEN, пакет/исходники и отсутствие пользовательских файлов в publisher allowlist.
+- [x] Добавить отрицательные fixture tests для signature/hash/repo/version, contaminated ZIP, traversal/case/link/limits.
+- [x] Проверить RED; реализовать общий strict inventory и подпись точных manifest bytes.
+- [x] Генерировать DPAPI signing key только в ignored local signing path; публичный ключ вне секретов в config.
+- [x] Единая версия UI/package/CLI; source identity включает exact HEAD/submodule/patch/locks.
+- [x] Проверить GREEN, пакет/исходники и отсутствие пользовательских файлов в publisher allowlist.
 
 ### Task 2: Portable apply/rollback и Windows lifecycle
 
 **Files:** src/agent/update_install.rs, updater.rs, portable.rs, mod.rs; src/main.rs; минимальный incoming-connection counter.
 **Interfaces:** check()->background status; download()->stage; prepare_apply()->helper handshake; early CLI apply(plan)->exit status.
 
-- [ ] Тесты apply/locked file/journal/rollback/data preservation/host version health.
-- [ ] Helper dispatch до Sciter и GUI job; отдельный runner path, own-job breakaway и handshake.
-- [ ] Проверять exact root/PID; блокировать активные сеансы и другие MCP/UI процессы, не убивать их.
-- [ ] Заменять только подписанные files; проверять новый self-test/version, иначе rollback.
-- [ ] Тесты проходят; реальная QA-транзакция старый 0.2.3 → новый 0.3.0 без изменения synthetic data.
+- [x] Тесты apply/locked file/journal/rollback/data preservation/host version health.
+- [x] Helper dispatch до Sciter и GUI job; отдельный runner path, own-job breakaway и handshake.
+- [x] Проверять exact root/PID; блокировать активные сеансы и другие MCP/UI процессы, не убивать их.
+- [x] Заменять только подписанные files; проверять новый self-test/version, иначе rollback.
+- [x] Тесты проходят; реальная QA-транзакция старый 0.2.3 → новый 0.3.0 без изменения synthetic data.
 
 ### Task 3: Кнопка и статусы
 
 **Files:** src/ui.rs, src/ui/index.tis, docs/UI_CONTRACT.md, updater.rs.
 **Interfaces:** agent_update_status/check/download/apply; JSON state/version/message/progress/action.
 
-- [ ] Зафиксировать reuse/baseline и acceptance matrix.
-- [ ] Использовать существующие button/outline/tokens; не менять соединение/пароли/agent gate.
-- [ ] Показать check/current/available/download/ready/blocked/error/version; фоновые запросы не блокируют UI.
+- [x] Зафиксировать reuse/baseline и acceptance matrix.
+- [x] Использовать существующие button/outline/tokens; не менять соединение/пароли/agent gate.
+- [x] Показать check/current/available/download/ready/blocked/error/version; фоновые запросы не блокируют UI.
 - [ ] Native states/viewports/interactions и соседняя regression; browser gate отдельно отмечен.
 
 ### Task 4: Сборка, GitHub и выпуск
@@ -64,11 +64,11 @@
 **Files:** docs/agent/BUILD.md, QUICKSTART.md, STATUS.md; tools/agent/publish_release.ps1; README fork; release receipts.
 
 - [ ] Релевантные unit tests, cargo release и portable hashes/self-test, network startup.
-- [ ] Независимый review diff и безопасность updater; исправить findings.
-- [ ] Создать public fork URBoRTEX/MegaRustDesk, сохранить upstream origin.
-- [ ] Secret/ignored/generated preflight перед explicit git add/commit/push feature branch; patch подмодуля опубликован.
+- [x] Независимый review diff и безопасность updater; исправить findings.
+- [x] Создать public fork URBoRTEX/MegaRustDesk, сохранить upstream origin.
+- [x] Secret/ignored/generated preflight перед explicit git add/commit/push feature branch; patch подмодуля опубликован.
 - [ ] Подписать versioned binary/source assets, создать draft, повторно проверить перед upload/publish.
-- [ ] Первый bootstrap пометить preview, пока полная UI/portable приёмка не завершена.
+- [x] Первый bootstrap пометить preview, пока полная UI/portable приёмка не завершена.
 - [ ] Проверить public release download/signature; client stable check и QA apply/rollback.
 - [ ] Retention current/previous/private quarantine, buildVerified/cleanupCompleted и открытые ограничения.
 
