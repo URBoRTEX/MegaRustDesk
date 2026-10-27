@@ -80,7 +80,10 @@ GitHub хранит public source/assets; готового GitHub-hosted build w
 7. Создать и отправить tag `agent-v0.3.0` на точный release commit в свой public fork.
 8. `python tools/agent/publish_release.py --notes-file docs/agent/RELEASE-0.3.0.md --publish`.
 
-Publisher создаёт preview draft, загружает binary/source/manifest/signature/checksums,
+Publisher создаёт draft, загружает binary/source/manifest/signature/checksums,
 скачивает assets и сверяет SHA до публикации. Перезапись опубликованного релиза запрещена.
 Без `--publish` остаётся проверенный draft. Авторизация GitHub нужна producer, клиентам не нужна.
-Stable discovery пропускает preview. Первая версия требует однократного bootstrap на каждом ПК.
+Stable discovery пропускает preview. После bootstrap обычная публикация (--publish)
+выставляет prerelease=false и Latest, чтобы уже установленная кнопка видела обновление.
+Для явно предварительной сборки нужен --preview; она не предлагается кнопкой.
+Клиенты 0.3.x уже имеют updater и не требуют повторного ручного bootstrap.

@@ -1,4 +1,4 @@
-"""Publish immutable preview assets from the reviewed local Windows producer."""
+"""Publish immutable assets to the updater channel, with explicit preview opt-in."""
 import argparse
 import json
 import subprocess
@@ -9,7 +9,7 @@ from release import ROOT, sha, verify_prepared
 def gh(*args):
     return subprocess.check_output(['gh',*map(str,args)],cwd=ROOT,text=True,encoding='utf-8').strip()
 
-def publish(notes, publish_now):
+def publish(notes, publish_now, preview=False):
     payload,assets=verify_prepared()
     repo=payload['repository'];tag=payload['tag']
     metadata=json.loads(gh('api','repos/'+repo))
@@ -28,8 +28,10 @@ def publish(notes, publish_now):
     existing=next((r for r in releases if r['tagName']==tag),None)
     if existing and not existing['isDraft']:
         raise ValueError('Published releases are immutable; use a new version')
+    prerelease='--prerelease='+str(preview).lower()
+    title=f'MegaRustDesk {payload["version"]}'+(' preview' if preview else '')
     if not existing:
-        gh('release','create',tag,'--repo',repo,'--verify-tag','--draft','--prerelease','--title',f'MegaRustDesk {payload["version"]} preview','--notes-file',notes)
+        gh('release','create',tag,'--repo',repo,'--verify-tag','--draft',prerelease,'--title',title,'--notes-file',notes)
     release=json.loads(gh('release','view',tag,'--repo',repo,'--json','assets,isDraft'))
     remote_names={a['name'] for a in release['assets']}
     if remote_names-set(p.name for p in assets):
@@ -45,12 +47,15 @@ def publish(notes, publish_now):
                 raise ValueError('Remote uploaded asset differs: '+path.name)
     verify_prepared()
     if publish_now:
-        gh('release','edit',tag,'--repo',repo,'--draft=false','--prerelease')
-    print(json.dumps({'repository':repo,'tag':tag,'publishedPreview':publish_now,'remoteAssetsVerified':len(assets)}))
+        args=['release','edit',tag,'--repo',repo,'--draft=false',prerelease,'--title',title]
+        if not preview: args.append('--latest')
+        gh(*args)
+    print(json.dumps({'repository':repo,'tag':tag,'published':publish_now,'publishedPreview':publish_now and preview,'channel':'preview' if preview else 'updater','remoteAssetsVerified':len(assets)}))
 
 if __name__=='__main__':
     parser=argparse.ArgumentParser()
     parser.add_argument('--notes-file',type=Path,required=True)
     parser.add_argument('--publish',action='store_true')
+    parser.add_argument('--preview',action='store_true',help='Exclude this prerelease from the installed client update button')
     args=parser.parse_args()
-    publish(args.notes_file.resolve(),args.publish)
+    publish(args.notes_file.resolve(),args.publish,args.preview)

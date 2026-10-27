@@ -1,5 +1,21 @@
 # MegaRustDesk: фактический статус
 
+## Доступность обновления 0.3.3 по кнопке, 2026-10-27
+
+Причина отсутствия обновления: publisher всегда выставлял prerelease=true, а клиенты
+0.3.x читают /releases/latest и исключают prerelease. До исправления endpoint давал 404.
+У опубликованной 0.3.3 изменены только metadata release: prerelease=false, Latest.
+Все пять asset IDs, подписанный manifest и исходные архивы сохранены.
+Анонимный запрос с User-Agent MegaRustDesk/0.3.2 возвращает HTTP 200 и agent-v0.3.3.
+Сам EXE 0.3.2 успешно проверил подпись и inventory 803 файлов 0.3.3.
+Установка на работающий основной/второй ПК в этом действии не выполнялась.
+
+Publisher теперь по умолчанию выпускает обычный Latest release; preview доступен
+явным --preview. Signing/source/inventory/download verification остаются обязательными.
+Regression default channel прошёл RED→GREEN; preview opt-in проверен отдельно.
+Новых binaries/архивов не создавалось; 0.3.3 остаётся привязана к tag 4745029.
+Полная native/clean-Windows/physical paste приёмка остаётся UNVERIFIED.
+
 ## 0.3.3 preview — управление и компактная панель, 2026-10-27
 
 По запросу владельца manual включён по умолчанию. Одна кнопка передачи Codex/возврата
