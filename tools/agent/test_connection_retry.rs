@@ -46,6 +46,8 @@ fn main() {
         assert!(result.is_none());assert_eq!(attempts.load(Ordering::SeqCst),1,"cancel during backoff must not reconnect");
         let result=unless_cancelled(std::future::pending::<()>(),async{}).await;
         assert!(result.is_none(),"cancel must drop an in-flight connect");
+        let result=unless_cancelled(async{7},async{}).await;
+        assert!(result.is_none(),"a queued Close wins over an equally ready connection");
         println!("PASS: real silent relay recovery, fresh socket, bounded attempts, security/login exclusions, success once, cancellation");
     });
 }

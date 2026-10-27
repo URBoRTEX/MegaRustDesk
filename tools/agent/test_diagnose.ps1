@@ -39,6 +39,12 @@ try {
     & (Join-Path $PSScriptRoot 'diagnose.ps1')
     $activeReport=Get-Content -LiteralPath $env:MEGARUSTDESK_DIAG_OUTPUT -Raw | ConvertFrom-Json
     if($activeReport.packageVersion -ne 'running-fixture' -or !$activeReport.processes[0].sameFolder -or !$activeReport.packageIsRunning){throw 'Diagnostic selected stale adjacent package instead of running main'}
+    $foreign=[pscustomobject]@{Name='RustDesk-Agent.exe';ExecutablePath=(Join-Path $fixture 'RustDesk-Agent.exe');CommandLine='RustDesk-Agent.exe';ProcessId=12346;CreationDate=[DateTime]::Now;SessionId=((Get-Process -Id $PID).SessionId+100)}
+    $diagnosticProcesses=@($diagnosticProcesses[0],$foreign)
+    Set-Item Function:Get-CimInstance -Value ({ $diagnosticProcesses }.GetNewClosure())
+    & (Join-Path $PSScriptRoot 'diagnose.ps1')
+    $activeReport=Get-Content -LiteralPath $env:MEGARUSTDESK_DIAG_OUTPUT -Raw | ConvertFrom-Json
+    if($activeReport.packageVersion -ne 'running-fixture'){throw 'Another Windows session changed diagnostic selection'}
     Write-Host 'PASS: nonce correlation, stage visibility, redaction, read-only report'
 } finally {
     $env:MEGARUSTDESK_DIAG_ROOT=$priorRoot
