@@ -167,7 +167,6 @@ impl<T: InvokeUiSession> Remote<T> {
             }
         };
 
-        let mut last_recv_time = Instant::now();
         let mut received = false;
         let conn_type = if self.handler.is_file_transfer() {
             ConnType::FILE_TRANSFER
@@ -179,16 +178,33 @@ impl<T: InvokeUiSession> Remote<T> {
             ConnType::default()
         };
 
-        match Client::start(
-            &self.handler.get_id(),
+        let peer_id = self.handler.get_id();
+        let connection = Client::start(
+            &peer_id,
             key,
             token,
             conn_type,
             self.handler.clone(),
-        )
-        .await
-        {
+        );
+        #[cfg(feature = "agent")]
+        let (connection, cancelled) = match crate::connection_retry::unless_cancelled(connection, async {
+            // Input is never queued across a failed pre-login transport. In particular,
+            // Close cancels the current socket/backoff before another attempt starts.
+            loop {
+                if matches!(self.receiver.recv().await, None | Some(Data::Close)) { break; }
+            }
+        }).await {
+            Some(result) => (result, false),
+            None => (Err(hbb_common::anyhow::anyhow!("Connection cancelled")), true),
+        };
+        #[cfg(not(feature = "agent"))]
+        let (connection, cancelled) = (connection.await, false);
+        match connection {
             Ok(((mut peer, direct, pk, kcp, stream_type), (feedback, rendezvous_server))) => {
+                // The established-session watchdog must not include rendezvous or
+                // handshake retries, which can already exceed its 30-second budget.
+                let mut last_recv_time = Instant::now();
+                self.timer = crate::rustdesk_interval(time::interval_at(Instant::now() + SEC30, SEC30));
                 self.handler
                     .connection_round_state
                     .lock()
@@ -355,7 +371,7 @@ impl<T: InvokeUiSession> Remote<T> {
                 }
             }
             Err(err) => {
-                self.handler.on_establish_connection_error(err.to_string());
+                if !cancelled { self.handler.on_establish_connection_error(err.to_string()); }
             }
         }
         // set_disconnected_ok is used to check if new connection round is started.

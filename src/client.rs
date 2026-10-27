@@ -204,7 +204,13 @@ impl Client {
         debug_assert!(peer == interface.get_id());
         interface.update_direct(None);
         interface.update_received(false);
-        match Self::_start(peer, key, token, conn_type, interface.clone()).await {
+        #[cfg(feature = "agent")]
+        let connection = crate::connection_retry::retry_before_login(||
+            Self::_start(peer, key, token, conn_type, interface.clone())
+        ).await;
+        #[cfg(not(feature = "agent"))]
+        let connection = Self::_start(peer, key, token, conn_type, interface.clone()).await;
+        match connection {
             Err(err) => {
                 let err_str = err.to_string();
                 if err_str.starts_with("Failed") {
@@ -788,7 +794,12 @@ impl Client {
         };
         match timeout(READ_TIMEOUT, conn.next())
             .await
-            .map_err(|err| anyhow!("Peer handshake receive timed out: {err}"))?
+            .map_err(|err| {
+                #[cfg(feature = "agent")]
+                { anyhow!(err).context(crate::connection_retry::RelayHandshakeTimeout) }
+                #[cfg(not(feature = "agent"))]
+                { anyhow!("Peer handshake receive timed out: {err}") }
+            })?
         {
             Some(res) => {
                 let bytes = res.map_err(|err| anyhow!("Peer handshake receive failed: {err}"))?;

@@ -10,6 +10,7 @@ $events=@(
     "create_relay requested from 192.0.2.1:1234, uuid: $nonce, secure: true",
     "Failed to create relay connection for 192.0.2.1:1234 with uuid ${nonce}: Peer handshake receive timed out: deadline has elapsed",
     'Peer handshake receive timed out: deadline has elapsed',
+    'Relay pre-login handshake timed out; retrying attempt 2/3',
     'Failed to create relay connection token=DO_NOT_EXPORT'
 )
 [IO.File]::WriteAllLines((Join-Path $fixture 'data/rustdesk/log/fixture.log'),$events)
@@ -25,9 +26,19 @@ try {
     $report=$raw | ConvertFrom-Json
     $hashes=@([regex]::Matches($raw,'uuidHash ([0-9a-f]{16})') | ForEach-Object {$_.Groups[1].Value})
     if($hashes.Count -ne 2 -or $hashes[0] -ne $hashes[1]){throw 'Request and failure must have the same canonical nonce hash'}
-    if($report.logEvents.Count -ne 3){throw 'Handshake stage must survive export'}
+    if($report.logEvents.Count -ne 4){throw 'Handshake stage and retry count must survive export'}
     if($raw -match '192\.0\.2\.1|DO_NOT_EXPORT|a30b8040-e1bd'){throw 'Sensitive event data escaped redaction'}
     if($report.settingsChanged -or $report.authenticationRead){throw 'Diagnostic must remain read-only'}
+    $activeRoot=Join-Path $fixture 'active'
+    [IO.Directory]::CreateDirectory($activeRoot) | Out-Null
+    $activeExe=Join-Path $activeRoot 'RustDesk-Agent.exe'
+    [IO.File]::WriteAllText($activeExe,'diagnostic fixture')
+    [IO.File]::WriteAllText((Join-Path $activeRoot 'manifest.json'),'{"version":"running-fixture","files":{}}')
+    $diagnosticProcesses=@([pscustomobject]@{Name='RustDesk-Agent.exe';ExecutablePath=$activeExe;CommandLine=('"'+$activeExe+'"');ProcessId=12345;CreationDate=[DateTime]::Now;SessionId=(Get-Process -Id $PID).SessionId})
+    Set-Item Function:Get-CimInstance -Value ({ $diagnosticProcesses }.GetNewClosure())
+    & (Join-Path $PSScriptRoot 'diagnose.ps1')
+    $activeReport=Get-Content -LiteralPath $env:MEGARUSTDESK_DIAG_OUTPUT -Raw | ConvertFrom-Json
+    if($activeReport.packageVersion -ne 'running-fixture' -or !$activeReport.processes[0].sameFolder -or !$activeReport.packageIsRunning){throw 'Diagnostic selected stale adjacent package instead of running main'}
     Write-Host 'PASS: nonce correlation, stage visibility, redaction, read-only report'
 } finally {
     $env:MEGARUSTDESK_DIAG_ROOT=$priorRoot

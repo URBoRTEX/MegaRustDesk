@@ -1,10 +1,13 @@
 $ErrorActionPreference = 'Stop';
 $all = @(Get-CimInstance Win32_Process -ErrorAction Stop | Where-Object { $_.Name -like '*RustDesk*' });
 $appRoot = [IO.Path]::GetFullPath($env:MEGARUSTDESK_DIAG_ROOT);
-if (!(Test-Path -LiteralPath (Join-Path $appRoot 'manifest.json'))) {
-    $roots = @($all | Where-Object { $_.ExecutablePath -and $_.CommandLine -notmatch '--agent-mcp' } | ForEach-Object { Split-Path -Parent $_.ExecutablePath } | Sort-Object -Unique | Where-Object { Test-Path -LiteralPath (Join-Path $_ 'manifest.json') });
-    if ($roots.Count -ne 1) { throw 'Open the application, or place this diagnostic beside RustDesk-Agent.exe and manifest.json' };
+$session=(Get-Process -Id $PID).SessionId;
+$roots = @($all | Where-Object { $_.SessionId -eq $session -and $_.ExecutablePath -and $_.CommandLine -notmatch '\s--' -and (Split-Path -Leaf $_.ExecutablePath) -ieq 'RustDesk-Agent.exe' } | ForEach-Object { Split-Path -Parent $_.ExecutablePath } | Sort-Object -Unique | Where-Object { Test-Path -LiteralPath (Join-Path $_ 'manifest.json') });
+if ($roots.Count -gt 1) { throw 'More than one portable main is running; cannot select a diagnostic target' };
+if ($roots.Count -eq 1) {
     $appRoot = $roots[0];
+} elseif (!(Test-Path -LiteralPath (Join-Path $appRoot 'manifest.json'))) {
+    throw 'Open the application, or place this diagnostic beside RustDesk-Agent.exe and manifest.json';
 };
 $exe = Join-Path $appRoot 'RustDesk-Agent.exe';
 $manifest = Get-Content -LiteralPath (Join-Path $appRoot 'manifest.json') -Encoding UTF8 -Raw | ConvertFrom-Json;
@@ -26,7 +29,7 @@ if(Test-Path -LiteralPath $logRoot){
     foreach($logFile in $logFiles){
         foreach($line in @(Get-Content -LiteralPath $logFile.FullName -Encoding UTF8 -Tail 500)){
             if($line -match '(?i)password|token|secret|signed|public.key|fingerprint'){continue};
-            if($line -notmatch 'start tcp:|Connection secured|keep_alive:|rendezvous server:|create_relay requested|Failed to create relay connection|Failed to accept connection|Failed to start ipc|server not started:|Handshake failed|Connection opened|Connection closed|Force to update pk|relay requested from peer|used to establish Relay|Peer handshake|Relay transport|Relay pairing'){continue};
+            if($line -notmatch 'start tcp:|Connection secured|keep_alive:|rendezvous server:|create_relay requested|Failed to create relay connection|Failed to accept connection|Failed to start ipc|server not started:|Handshake failed|Connection opened|Connection closed|Force to update pk|relay requested from peer|used to establish Relay|Peer handshake|Relay transport|Relay pairing|Relay pre-login handshake timed out'){continue};
             $safe=$line -replace '\b(?:\d{1,3}\.){3}\d{1,3}\b','[address]';
             $safe=$safe -replace '(?i)\[[0-9a-f:]+:[0-9a-f:.]+\]','[address]';
             $safe=[regex]::Replace($safe,'(?i)uuid[: ]+([^,\s]+)',{param($match) $hasher=[Security.Cryptography.SHA256]::Create();try{$hash=[BitConverter]::ToString($hasher.ComputeHash([Text.Encoding]::UTF8.GetBytes($match.Groups[1].Value.TrimEnd(':').ToLowerInvariant()))).Replace('-','').Substring(0,16).ToLowerInvariant();return 'uuidHash '+$hash}finally{$hasher.Dispose()}});
@@ -34,7 +37,7 @@ if(Test-Path -LiteralPath $logRoot){
         };
     };
 };
-$report=[ordered]@{diagnosticVersion=3;checkedUtc=[DateTime]::UtcNow.ToString('o');packageVersion=$manifest.version;sourceBuildId=$manifest.sourceBuildId;executableSha256=$exeHash;executableMatchesManifest=($exeHash -eq $manifest.files.'RustDesk-Agent.exe');processes=$processes;network=$network;socketsInspectionAvailable=$socketsAvailable;sockets=$sockets;logEvents=@($safeLines | Select-Object -Last 70);settingsChanged=$false;authenticationRead=$false};
+$report=[ordered]@{diagnosticVersion=4;checkedUtc=[DateTime]::UtcNow.ToString('o');packageVersion=$manifest.version;packageIsRunning=($roots.Count -eq 1);sourceBuildId=$manifest.sourceBuildId;executableSha256=$exeHash;executableMatchesManifest=($exeHash -eq $manifest.files.'RustDesk-Agent.exe');processes=$processes;network=$network;socketsInspectionAvailable=$socketsAvailable;sockets=$sockets;logEvents=@($safeLines | Sort-Object event | Select-Object -Last 70);settingsChanged=$false;authenticationRead=$false};
 $output=$env:MEGARUSTDESK_DIAG_OUTPUT;
 if([string]::IsNullOrEmpty($output)){$output=Join-Path $appRoot 'MegaRustDesk-diagnostics.txt'};
 [IO.File]::WriteAllText([IO.Path]::GetFullPath($output),($report|ConvertTo-Json -Depth 6),[Text.UTF8Encoding]::new($false));
