@@ -585,7 +585,10 @@ impl<T: InvokeUiSession> Remote<T> {
     #[cfg(feature = "agent")]
     async fn cancel_clipboard_paste(&mut self, peer: &mut Stream, reason: &str) {
         if self.clipboard_paste.take().is_some() {
-            if !reason.is_empty() { self.handler.agent.message(reason); }
+            if !reason.is_empty() {
+                self.handler.agent.message(reason);
+                self.handler.msgbox("custom-error-nocancel-hasclose", "Clipboard", reason, "");
+            }
             for message in crate::manual_input::release_clipboard_input() {
                 if peer.send(&message).await.is_err() { break; }
             }
@@ -613,6 +616,7 @@ impl<T: InvokeUiSession> Remote<T> {
                 if files {
                     if !self.handler.is_file_clipboard_required() {
                         self.handler.agent.message("Передача файлов через буфер запрещена настройками сеанса.");
+                        self.handler.msgbox("custom-error-nocancel-hasclose", "Clipboard", "Передача файлов через буфер запрещена настройками сеанса.", "");
                         return true;
                     }
                     self.clipboard_paste = Some(crate::manual_clipboard::PasteBarrier::new(epoch, token, messages, std::time::Instant::now()));
