@@ -786,9 +786,12 @@ impl Client {
                 return Ok(option_pk);
             }
         };
-        match timeout(READ_TIMEOUT, conn.next()).await? {
+        match timeout(READ_TIMEOUT, conn.next())
+            .await
+            .map_err(|err| anyhow!("Peer handshake receive timed out: {err}"))?
+        {
             Some(res) => {
-                let bytes = res?;
+                let bytes = res.map_err(|err| anyhow!("Peer handshake receive failed: {err}"))?;
                 if let Ok(msg_in) = Message::parse_from_bytes(&bytes) {
                     if let Some(message::Union::SignedId(si)) = msg_in.union {
                         if let Ok((id, their_pk_b)) = decode_id_pk(&si.id, &sign_pk) {
@@ -801,7 +804,10 @@ impl Client {
                                     symmetric_value,
                                     ..Default::default()
                                 });
-                                timeout(CONNECT_TIMEOUT, conn.send(&msg_out)).await??;
+                                timeout(CONNECT_TIMEOUT, conn.send(&msg_out))
+                                    .await
+                                    .map_err(|err| anyhow!("Peer handshake send timed out: {err}"))?
+                                    .map_err(|err| anyhow!("Peer handshake send failed: {err}"))?;
                                 conn.set_key(key);
                             } else {
                                 log::error!("Handshake failed: sign failure");

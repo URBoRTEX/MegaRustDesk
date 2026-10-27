@@ -26,15 +26,15 @@ if(Test-Path -LiteralPath $logRoot){
     foreach($logFile in $logFiles){
         foreach($line in @(Get-Content -LiteralPath $logFile.FullName -Encoding UTF8 -Tail 500)){
             if($line -match '(?i)password|token|secret|signed|public.key|fingerprint'){continue};
-            if($line -notmatch 'start tcp:|Connection secured|keep_alive:|rendezvous server:|create_relay requested|Failed to create relay connection|Failed to accept connection|Failed to start ipc|server not started:|Handshake failed|Connection opened|Connection closed|Force to update pk|relay requested from peer|used to establish Relay'){continue};
+            if($line -notmatch 'start tcp:|Connection secured|keep_alive:|rendezvous server:|create_relay requested|Failed to create relay connection|Failed to accept connection|Failed to start ipc|server not started:|Handshake failed|Connection opened|Connection closed|Force to update pk|relay requested from peer|used to establish Relay|Peer handshake|Relay transport|Relay pairing'){continue};
             $safe=$line -replace '\b(?:\d{1,3}\.){3}\d{1,3}\b','[address]';
             $safe=$safe -replace '(?i)\[[0-9a-f:]+:[0-9a-f:.]+\]','[address]';
-            $safe=[regex]::Replace($safe,'(?i)uuid[: ]+([^,\s]+)',{param($match) $hasher=[Security.Cryptography.SHA256]::Create();try{$hash=[BitConverter]::ToString($hasher.ComputeHash([Text.Encoding]::UTF8.GetBytes($match.Groups[1].Value))).Replace('-','').Substring(0,16).ToLowerInvariant();return 'uuidHash '+$hash}finally{$hasher.Dispose()}});
+            $safe=[regex]::Replace($safe,'(?i)uuid[: ]+([^,\s]+)',{param($match) $hasher=[Security.Cryptography.SHA256]::Create();try{$hash=[BitConverter]::ToString($hasher.ComputeHash([Text.Encoding]::UTF8.GetBytes($match.Groups[1].Value.TrimEnd(':').ToLowerInvariant()))).Replace('-','').Substring(0,16).ToLowerInvariant();return 'uuidHash '+$hash}finally{$hasher.Dispose()}});
             $safeLines += [ordered]@{log=$logFile.Name;event=$safe};
         };
     };
 };
-$report=[ordered]@{diagnosticVersion=2;checkedUtc=[DateTime]::UtcNow.ToString('o');packageVersion=$manifest.version;sourceBuildId=$manifest.sourceBuildId;executableSha256=$exeHash;executableMatchesManifest=($exeHash -eq $manifest.files.'RustDesk-Agent.exe');processes=$processes;network=$network;socketsInspectionAvailable=$socketsAvailable;sockets=$sockets;logEvents=@($safeLines | Select-Object -Last 70);settingsChanged=$false;authenticationRead=$false};
+$report=[ordered]@{diagnosticVersion=3;checkedUtc=[DateTime]::UtcNow.ToString('o');packageVersion=$manifest.version;sourceBuildId=$manifest.sourceBuildId;executableSha256=$exeHash;executableMatchesManifest=($exeHash -eq $manifest.files.'RustDesk-Agent.exe');processes=$processes;network=$network;socketsInspectionAvailable=$socketsAvailable;sockets=$sockets;logEvents=@($safeLines | Select-Object -Last 70);settingsChanged=$false;authenticationRead=$false};
 $output=$env:MEGARUSTDESK_DIAG_OUTPUT;
 if([string]::IsNullOrEmpty($output)){$output=Join-Path $appRoot 'MegaRustDesk-diagnostics.txt'};
 [IO.File]::WriteAllText([IO.Path]::GetFullPath($output),($report|ConvertTo-Json -Depth 6),[Text.UTF8Encoding]::new($false));

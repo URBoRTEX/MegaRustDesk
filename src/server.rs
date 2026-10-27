@@ -197,10 +197,16 @@ pub async fn create_tcp_connection(
             .into(),
             ..Default::default()
         });
-        timeout(CONNECT_TIMEOUT, stream.send(&msg_out)).await??;
-        match timeout(CONNECT_TIMEOUT, stream.next()).await? {
+        timeout(CONNECT_TIMEOUT, stream.send(&msg_out))
+            .await
+            .context("Peer handshake send timed out")?
+            .context("Peer handshake send failed")?;
+        match timeout(CONNECT_TIMEOUT, stream.next())
+            .await
+            .context("Peer handshake receive timed out")?
+        {
             Some(res) => {
-                let bytes = res?;
+                let bytes = res.context("Peer handshake receive failed")?;
                 if let Ok(msg_in) = Message::parse_from_bytes(&bytes) {
                     if let Some(message::Union::PublicKey(pk)) = msg_in.union {
                         if pk.asymmetric_value.len() == box_::PUBLICKEYBYTES {
@@ -251,7 +257,7 @@ pub async fn accept_connection(
     secure: bool,
 ) {
     if let Err(err) = accept_connection_(server, socket, secure).await {
-        log::warn!("Failed to accept connection from {}: {}", peer_addr, err);
+        log::warn!("Failed to accept connection from {}: {:#}", peer_addr, err);
     }
 }
 
@@ -267,7 +273,7 @@ pub async fn create_relay_connection(
         create_relay_connection_(server, relay_server, uuid.clone(), peer_addr, secure, ipv4).await
     {
         log::error!(
-            "Failed to create relay connection for {} with uuid {}: {}",
+            "Failed to create relay connection for {} with uuid {}: {:#}",
             peer_addr,
             uuid,
             err
@@ -287,7 +293,8 @@ async fn create_relay_connection_(
         socket_client::ipv4_to_ipv6(crate::check_port(relay_server, RELAY_PORT), ipv4),
         CONNECT_TIMEOUT,
     )
-    .await?;
+    .await
+    .context("Relay transport connect failed")?;
     let mut msg_out = RendezvousMessage::new();
     let licence_key = crate::get_key(true).await;
     msg_out.set_request_relay(RequestRelay {
@@ -295,7 +302,10 @@ async fn create_relay_connection_(
         uuid,
         ..Default::default()
     });
-    stream.send(&msg_out).await?;
+    stream
+        .send(&msg_out)
+        .await
+        .context("Relay pairing request failed")?;
     create_tcp_connection(server, stream, peer_addr, secure).await?;
     Ok(())
 }
