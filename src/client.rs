@@ -1109,6 +1109,25 @@ impl ClientClipboardHandler {
     }
 
     fn check_clipboard(&mut self) {
+        #[cfg(all(feature = "agent", not(feature = "flutter")))]
+        {
+            let Some(context) = self.client_clip_ctx.as_ref() else { return; };
+            let agent = context.cfg.agent.clone();
+            let gate = agent.gate.lock().unwrap();
+            let epoch = agent.human_clipboard_epoch.load(std::sync::atomic::Ordering::SeqCst);
+            if !gate.permits_manual(epoch) { return; }
+            let Some(token) = clipboard::access::AUTHORITY.text_token() else { return; };
+            let keyboard = *context.cfg.server_keyboard_enabled.read().unwrap();
+            let clipboard_enabled = *context.cfg.server_clipboard_enabled.read().unwrap();
+            let lc = context.cfg.lc.read().unwrap();
+            if !keyboard || !clipboard_enabled || lc.view_only.v || lc.disable_clipboard.v { return; }
+            drop(lc);
+            if let Some(msg) = check_clipboard(&mut self.ctx, ClipboardSide::Client, false) {
+                self.send_msg_with_epoch(msg, false, Some((epoch, token)));
+            }
+            return;
+        }
+        #[cfg(any(not(feature = "agent"), feature = "flutter"))]
         if CLIPBOARD_STATE.lock().unwrap().running {
             #[cfg(feature = "unix-file-copy-paste")]
             if let Some(urls) = check_clipboard_files(&mut self.ctx, ClipboardSide::Client, false) {
@@ -1150,11 +1169,24 @@ impl ClientClipboardHandler {
 
     #[cfg(not(feature = "flutter"))]
     fn send_msg(&self, msg: Message, _is_file: bool) {
+        self.send_msg_with_epoch(msg, _is_file, None);
+    }
+
+    #[cfg(not(feature = "flutter"))]
+    fn send_msg_with_epoch(&self, msg: Message, _is_file: bool, _authorization: Option<(u64, u64)>) {
         if let Some(ctx) = &self.client_clip_ctx {
+            let send = |msg| {
+                #[cfg(feature = "agent")]
+                if let Some((epoch, token)) = _authorization {
+                    let _ = ctx.tx.send(Data::HumanClipboardMessage(epoch, token, msg));
+                    return;
+                }
+                let _ = ctx.tx.send(Data::Message(msg));
+            };
             #[cfg(feature = "unix-file-copy-paste")]
             if _is_file {
                 if ctx.is_file_supported {
-                    let _ = ctx.tx.send(Data::Message(msg));
+                    send(msg);
                 }
                 return;
             }
@@ -1167,12 +1199,12 @@ impl ClientClipboardHandler {
                         &pi.platform,
                         multi_clipboards,
                     ) {
-                        let _ = ctx.tx.send(Data::Message(msg_out));
+                        send(msg_out);
                         return;
                     }
                 }
             }
-            let _ = ctx.tx.send(Data::Message(msg));
+            send(msg);
         }
     }
 }
@@ -1774,8 +1806,12 @@ impl Deref for LoginConfigHandler {
 impl LoginConfigHandler {
     #[cfg(feature = "agent")]
     pub fn enforce_agent_isolation(&mut self) {
-        self.config.disable_clipboard.v = true;
-        self.config.enable_file_copy_paste.v = false;
+        if !self.config.options.contains_key("agent-human-clipboard-v1") {
+            self.config.disable_clipboard.v = false;
+            self.config.enable_file_copy_paste.v = true;
+            self.config.options.insert("agent-human-clipboard-v1".into(), "Y".into());
+            if !self.id.is_empty() { self.config.store(&self.id); }
+        }
         self.force_relay = true;
     }
     /// Initialize the login config handler.
@@ -2270,6 +2306,12 @@ impl LoginConfigHandler {
         }
         if view_only || self.get_toggle_option("disable-clipboard") {
             msg.disable_clipboard = BoolOption::Yes.into();
+        }
+        #[cfg(feature = "agent")]
+        {
+            // Human activation sends the actual permissions after authentication.
+            msg.disable_clipboard = BoolOption::Yes.into();
+            msg.enable_file_transfer = BoolOption::No.into();
         }
         msg.supported_decoding = MessageField::some(self.get_supported_decoding());
         Some(msg)
@@ -3673,6 +3715,12 @@ pub enum Data {
     AgentRelease(Vec<Message>),
     #[cfg(feature = "agent")]
     ManualText(u64, String, [bool; 8]),
+    #[cfg(feature = "agent")]
+    HumanClipboardState(u64, u64),
+    #[cfg(feature = "agent")]
+    HumanPaste(u64, u64, Vec<Message>),
+    #[cfg(feature = "agent")]
+    HumanClipboardMessage(u64, u64, Message),
     Close,
     Login((String, String, String, bool)),
     Message(Message),

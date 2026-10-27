@@ -63,5 +63,17 @@ fn main() {
     let mut translated=KeyEvent::new();translated.set_win2win_hotkey(0x0057_0000);translated.down=true;translated.mode=KeyboardMode::Translate.into();
     let translated=manual_input::neutral_release(translated).unwrap();
     assert!(!translated.down && translated.mode.enum_value().unwrap()==KeyboardMode::Translate);
-    println!("manual protocol: Unicode + held modifiers + neutral raw key release: PASS");
+    let releases = manual_input::release_clipboard_input();
+    assert_eq!(releases.len(), 11);
+    for message in releases {
+        match message.union.unwrap() {
+            message::Union::KeyEvent(event) => {
+                assert!(!event.down && !event.press && event.modifiers.is_empty());
+                assert!(matches!(event.union, Some(key_event::Union::ControlKey(_))));
+            }
+            message::Union::MouseEvent(event) => assert_eq!(event.mask & 7, 2),
+            _ => panic!("clipboard cancellation must never type or press"),
+        }
+    }
+    println!("manual protocol: Unicode + held modifiers + neutral raw key/clipboard release: PASS");
 }

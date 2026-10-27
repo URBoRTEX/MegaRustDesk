@@ -64,3 +64,17 @@ pub fn prepare_text(
     }
     Ok((gate.epoch, text))
 }
+
+#[cfg(feature = "agent")]
+pub fn release_clipboard_input() -> Vec<Message> {
+    let mut messages = Vec::new();
+    for key in MODIFIER_KEYS {
+        let mut event = KeyEvent::new(); event.set_control_key(key);
+        let mut message = Message::new(); message.set_key_event(event); messages.push(message);
+    }
+    for button in [1, 2, 4] {
+        let mut event = MouseEvent::new(); event.mask = (button << 3) | 2;
+        let mut message = Message::new(); message.set_mouse_event(event); messages.push(message);
+    }
+    messages
+}

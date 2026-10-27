@@ -2,7 +2,9 @@ use super::{input_service::*, *};
 #[cfg(feature = "unix-file-copy-paste")]
 use crate::clipboard::try_empty_clipboard_files;
 #[cfg(not(any(target_os = "android", target_os = "ios")))]
-use crate::clipboard::{update_clipboard, ClipboardSide};
+use crate::clipboard::ClipboardSide;
+#[cfg(all(not(feature = "agent"), not(any(target_os = "android", target_os = "ios"))))]
+use crate::clipboard::update_clipboard;
 #[cfg(any(target_os = "windows", target_os = "linux", target_os = "macos"))]
 use crate::clipboard_file::*;
 #[cfg(target_os = "android")]
@@ -900,7 +902,7 @@ impl Connection {
                         #[cfg(feature = "unix-file-copy-paste")]
                         if crate::is_support_file_copy_paste(&conn.lr.version)
                         {
-                            conn.handle_file_clip(_clip).await;
+                            conn.handle_file_clip(_clip.message).await;
                         }
                     }
                     None => {
@@ -2509,7 +2511,12 @@ impl Connection {
                 Some(message::Union::Clipboard(cb)) => {
                     if self.clipboard {
                         #[cfg(not(any(target_os = "android", target_os = "ios")))]
-                        update_clipboard(vec![cb], ClipboardSide::Host);
+                        {
+                            #[cfg(feature = "agent")]
+                            crate::clipboard::update_clipboard_(vec![cb], ClipboardSide::Host);
+                            #[cfg(not(feature = "agent"))]
+                            update_clipboard(vec![cb], ClipboardSide::Host);
+                        }
                         // ios as the controlled side is actually not supported for now.
                         // The following code is only used to preserve the logic of handling text clipboard on mobile.
                         #[cfg(target_os = "ios")]
@@ -2537,6 +2544,9 @@ impl Connection {
                 Some(message::Union::MultiClipboards(_mcb)) => {
                     #[cfg(not(any(target_os = "android", target_os = "ios")))]
                     if self.clipboard {
+                        #[cfg(feature = "agent")]
+                        crate::clipboard::update_clipboard_(_mcb.clipboards, ClipboardSide::Host);
+                        #[cfg(not(feature = "agent"))]
                         update_clipboard(_mcb.clipboards, ClipboardSide::Host);
                     }
                     #[cfg(target_os = "android")]

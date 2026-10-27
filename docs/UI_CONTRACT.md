@@ -64,3 +64,18 @@ Matrix: 1280x800, 900x600, minimum 850x500; light/dark; manual/running/paused/st
 disconnected/error; collapse/expand/reclaim; Unicode/newlines/empty/oversized paste;
 adjacent toolbar, file transfer and password dialog. Native and browser fixture evidence
 are recorded separately; live remote clipboard/input requires a separate human check.
+
+Human clipboard delta 2026-10-27: restore standard Ctrl+C/Ctrl+V text/files in both
+directions in MegaRustDesk (not nested Windows RDP). Reuse Windows Cliprdr, existing
+toolbar/settings/permissions and explicit text-paste fallback. No geometry, tokens,
+components or new MCP tools. Physical enter/key activates only a connected Manual
+epoch. Focus loss preserves an authorized file operation for local Explorer paste;
+handoff/pause/stop/disconnect revoke it. A pending Ctrl+V is cancelled by the ordered
+focus/key release and never re-presses buffered keys afterward.
+
+Acceptance: existing 1280x800/900x600/850x500 light/dark viewer regression; native OLE
+fixture Unicode, directory and two files with exact bytes; initial copy before
+activation, exact apply ACK before first V-down, old ACK/epoch/token rejection,
+permission denial, timeout, bounded queue, clipboard busy and real bidirectional
+copy on two PCs. Native fixture substitutes the OS clipboard write and does not
+read user clipboard; it is separate from physical Windows Explorer acceptance.

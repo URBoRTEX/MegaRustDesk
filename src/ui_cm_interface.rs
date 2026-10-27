@@ -376,7 +376,7 @@ impl<T: InvokeUiCM> IpcTaskRunner<T> {
         } else {
             log::debug!("Clipboard is enabled from client peer, actually useless: type 2");
             let rx_clip2;
-            (_tx_clip, rx_clip2) = unbounded_channel::<clipboard::ClipboardFile>();
+            (_tx_clip, rx_clip2) = unbounded_channel::<clipboard::ClipboardEvent>();
             rx_clip_holder = (Arc::new(TokioMutex::new(rx_clip2)), None);
             rx_clip = rx_clip_holder.0.lock().await;
         }
@@ -459,7 +459,7 @@ impl<T: InvokeUiCM> IpcTaskRunner<T> {
                                     let is_stopping_allowed = _clip.is_beginning_message();
                                     let is_clipboard_enabled = ContextSend::is_enabled();
                                     let file_transfer_enabled = self.file_transfer_enabled;
-                                    let stop = !is_stopping_allowed && !(is_clipboard_enabled && file_transfer_enabled);
+                                    let stop = (cfg!(feature = "agent") || !is_stopping_allowed) && !(is_clipboard_enabled && file_transfer_enabled && (!cfg!(feature = "agent") || self.file_transfer_enabled_peer));
                                     log::debug!(
                                         "Process clipboard message from client peer, stop: {}, is_stopping_allowed: {}, is_clipboard_enabled: {}, file_transfer_enabled: {}",
                                         stop, is_stopping_allowed, is_clipboard_enabled, file_transfer_enabled);
@@ -470,6 +470,8 @@ impl<T: InvokeUiCM> IpcTaskRunner<T> {
                                             log::debug!("Clipboard message from client peer, but not authorized");
                                             continue;
                                         }
+                                        #[cfg(feature = "agent")]
+                                        clipboard::access::AUTHORITY.grant(true, true);
                                         let conn_id = self.conn_id;
                                         let _ = ContextSend::proc(|context| -> ResultType<()> {
                                             context.server_clip_file(conn_id, _clip)
@@ -481,6 +483,14 @@ impl<T: InvokeUiCM> IpcTaskRunner<T> {
                                     #[cfg(target_os = "windows")]
                                     {
                                         self.file_transfer_enabled_peer = _enabled;
+                                        #[cfg(feature = "agent")]
+                                        {
+                                            if _enabled && self.file_transfer_enabled {
+                                                clipboard::access::AUTHORITY.grant(true, true);
+                                            } else {
+                                                clipboard::access::AUTHORITY.revoke();
+                                            }
+                                        }
                                     }
                                 }
                                 Data::Theme(dark) => {
@@ -573,11 +583,13 @@ impl<T: InvokeUiCM> IpcTaskRunner<T> {
                     Some(_clip) => {
                         #[cfg(target_os = "windows")]
                         {
+                            if !clipboard::access::AUTHORITY.accepts(_clip.token) { continue; }
+                            let _clip = _clip.message;
                             let is_stopping_allowed = _clip.is_stopping_allowed();
                             let is_clipboard_enabled = ContextSend::is_enabled();
                             let file_transfer_enabled = self.file_transfer_enabled;
                             let file_transfer_enabled_peer = self.file_transfer_enabled_peer;
-                            let stop = is_stopping_allowed && !(is_clipboard_enabled && file_transfer_enabled && file_transfer_enabled_peer);
+                            let stop = (cfg!(feature = "agent") || is_stopping_allowed) && !(is_clipboard_enabled && file_transfer_enabled && file_transfer_enabled_peer);
                             log::debug!(
                                 "Process clipboard message from clip, stop: {}, is_stopping_allowed: {}, is_clipboard_enabled: {}, file_transfer_enabled: {}, file_transfer_enabled_peer: {}",
                                 stop, is_stopping_allowed, is_clipboard_enabled, file_transfer_enabled, file_transfer_enabled_peer);

@@ -1,5 +1,9 @@
+#[cfg(feature = "agent")]
+use hbb_common::message_proto::option_message::BoolOption;
 #[cfg(not(any(target_os = "android", target_os = "ios")))]
-use crate::clipboard::{update_clipboard, ClipboardSide};
+use crate::clipboard::ClipboardSide;
+#[cfg(not(feature = "agent"))]
+use crate::clipboard::update_clipboard;
 #[cfg(not(any(target_os = "ios")))]
 use crate::{audio_service, clipboard::CLIPBOARD_INTERVAL, ConnInner, CLIENT_SERVER};
 use crate::{
@@ -78,6 +82,10 @@ pub struct Remote<T: InvokeUiSession> {
     chroma: Arc<RwLock<Option<Chroma>>>,
     last_record_state: bool,
     sent_close_reason: bool,
+    #[cfg(feature = "agent")]
+    clipboard_sequence: u32,
+    #[cfg(feature = "agent")]
+    clipboard_paste: Option<crate::manual_clipboard::PasteBarrier<Message>>,
 }
 
 #[derive(Default)]
@@ -127,10 +135,16 @@ impl<T: InvokeUiSession> Remote<T> {
             chroma: Default::default(),
             last_record_state: false,
             sent_close_reason: false,
+            #[cfg(feature = "agent")]
+            clipboard_sequence: 0,
+            #[cfg(feature = "agent")]
+            clipboard_paste: None,
         }
     }
 
     pub async fn io_loop(&mut self, key: &str, token: &str, round: u32) {
+        #[cfg(feature = "agent")]
+        clipboard::access::manage_human_viewer();
         #[cfg(target_os = "windows")]
         let _file_clip_context_holder = {
             // `is_port_forward()` will not reach here, but we still check it for clarity.
@@ -257,6 +271,10 @@ impl<T: InvokeUiSession> Remote<T> {
                                 if !self.handle_msg_from_ui(d, &mut peer).await {
                                     break;
                                 }
+                                #[cfg(all(feature = "agent", windows))]
+                                while let Ok(event) = rx_clip_client.try_recv() {
+                                    self.handle_local_clipboard_msg(&mut peer, Some(event)).await;
+                                }
                             }
                         }
                         _msg = rx_clip_client.recv() => {
@@ -279,6 +297,10 @@ impl<T: InvokeUiSession> Remote<T> {
                             }
                         }
                         _ = status_timer.tick() => {
+                            #[cfg(feature = "agent")]
+                            if self.clipboard_paste_invalid() {
+                                self.cancel_clipboard_paste(&mut peer, "Вставка отменена: буфер не подтверждён. Обновите MegaRustDesk на обоих ПК.").await;
+                            }
                             let elapsed = fps_instant.elapsed().as_millis();
                             if elapsed < 1000 {
                                 continue;
@@ -358,11 +380,16 @@ impl<T: InvokeUiSession> Remote<T> {
 
     #[cfg(any(target_os = "windows", feature = "unix-file-copy-paste"))]
     async fn handle_local_clipboard_msg(
-        &self,
+        &mut self,
         peer: &mut Stream,
-        msg: Option<clipboard::ClipboardFile>,
+        msg: Option<clipboard::ClipboardEvent>,
     ) {
-        match msg {
+        #[cfg(feature = "agent")]
+        if let Some(event) = msg.as_ref() {
+            if clipboard::access::AUTHORITY.file_token() != Some(event.token)
+                || !self.handler.is_file_clipboard_required() { return; }
+        }
+        match msg.map(|event| event.message) {
             Some(clip) => match clip {
                 clipboard::ClipboardFile::NotifyCallback {
                     r#type,
@@ -398,6 +425,17 @@ impl<T: InvokeUiSession> Remote<T> {
                             // to-do: Show msgbox with "Don't show again" option
                         };
                         log::debug!("Send system clipboard message to remote");
+                        #[cfg(feature = "agent")]
+                        let clip = match clip {
+                            clipboard::ClipboardFile::FormatList { mut format_list } => {
+                                if self.clipboard_sequence >= 0x3fffffff { return; }
+                                self.clipboard_sequence += 1;
+                                format_list.push((self.clipboard_sequence as i32, clipboard::access::SEQUENCE_FORMAT.into()));
+                                if let Some(paste) = self.clipboard_paste.as_mut() { paste.announce(self.clipboard_sequence); }
+                                clipboard::ClipboardFile::FormatList { format_list }
+                            }
+                            other => other,
+                        };
                         let msg = crate::clipboard_file::clip_2_msg(clip);
                         allow_err!(peer.send(&msg).await);
                     }
@@ -535,8 +573,119 @@ impl<T: InvokeUiSession> Remote<T> {
         self.sent_close_reason = true;
     }
 
+    #[cfg(feature = "agent")]
+    fn clipboard_paste_invalid(&self) -> bool {
+        let gate = self.handler.agent.gate.lock().unwrap();
+        self.clipboard_paste.as_ref().map_or(false, |paste| {
+            !gate.permits_manual(paste.epoch)
+                || paste.invalid(gate.epoch, clipboard::access::AUTHORITY.current(), std::time::Instant::now())
+        })
+    }
+
+    #[cfg(feature = "agent")]
+    async fn cancel_clipboard_paste(&mut self, peer: &mut Stream, reason: &str) {
+        if self.clipboard_paste.take().is_some() {
+            if !reason.is_empty() { self.handler.agent.message(reason); }
+            for message in crate::manual_input::release_clipboard_input() {
+                if peer.send(&message).await.is_err() { break; }
+            }
+        }
+    }
+
     async fn handle_msg_from_ui(&mut self, data: Data, peer: &mut Stream) -> bool {
         match data {
+            #[cfg(feature = "agent")]
+            Data::HumanPaste(epoch, token, messages) => {
+                if self.clipboard_paste_invalid() { self.cancel_clipboard_paste(peer, "").await; }
+                if !self.handler.agent.gate.lock().unwrap().permits_manual(epoch)
+                    || clipboard::access::AUTHORITY.current() != token { return true; }
+                if let Some(paste) = self.clipboard_paste.as_mut() {
+                    for message in messages { if paste.push(message).is_err() { self.cancel_clipboard_paste(peer, "Вставка отменена: слишком много ожидающих событий.").await; break; } }
+                    return true;
+                }
+                #[cfg(windows)]
+                let files = {
+                    let gate = self.handler.agent.gate.lock().unwrap();
+                    gate.permits_manual(epoch) && clipboard::platform::windows::local_files_available()
+                };
+                #[cfg(not(windows))]
+                let files = false;
+                if files {
+                    if !self.handler.is_file_clipboard_required() {
+                        self.handler.agent.message("Передача файлов через буфер запрещена настройками сеанса.");
+                        return true;
+                    }
+                    self.clipboard_paste = Some(crate::manual_clipboard::PasteBarrier::new(epoch, token, messages, std::time::Instant::now()));
+                    #[cfg(windows)]
+                    {
+                        ContextSend::enable(true);
+                        let result = ContextSend::proc(|context| context.refresh_file_list(self.client_conn_id).map_err(|e| e.into()));
+                        if result.is_err() { self.cancel_clipboard_paste(peer, "Не удалось подготовить файловый буфер.").await; }
+                    }
+                    return true;
+                }
+                if self.handler.is_text_clipboard_required() {
+                    let snapshot = {
+                        let gate = self.handler.agent.gate.lock().unwrap();
+                        if gate.permits_manual(epoch) && clipboard::access::AUTHORITY.text_token() == Some(token) {
+                            crate::clipboard::check_clipboard(&mut None, ClipboardSide::Client, true)
+                        } else { None }
+                    };
+                    if let Some(message) = snapshot {
+                        if clipboard::access::AUTHORITY.current() != token { return true; }
+                        if peer.send(&message).await.is_err() { return false; }
+                    }
+                }
+                for message in messages {
+                    if !self.handler.agent.gate.lock().unwrap().permits_manual(epoch)
+                        || clipboard::access::AUTHORITY.current() != token { return true; }
+                    if peer.send(&message).await.is_err() { return false; }
+                }
+            }
+            #[cfg(feature = "agent")]
+            Data::HumanClipboardMessage(epoch, token, msg) => {
+                if clipboard::access::AUTHORITY.text_token() != Some(token)
+                    || !self.handler.agent.gate.lock().unwrap().permits_manual(epoch)
+                    || !self.handler.is_text_clipboard_required()
+                    || !matches!(msg.union, Some(message::Union::Clipboard(_)) | Some(message::Union::MultiClipboards(_))) { return true; }
+                if peer.send(&msg).await.is_err() { return false; }
+            }
+            #[cfg(feature = "agent")]
+            Data::HumanClipboardState(epoch, token) => {
+                if self.clipboard_paste_invalid() { self.cancel_clipboard_paste(peer, "").await; }
+                if clipboard::access::AUTHORITY.current() != token
+                    || self.handler.agent.gate.lock().unwrap().epoch != epoch { return true; }
+                let text = self.handler.is_text_clipboard_required();
+                let files = self.handler.is_file_clipboard_required();
+                let mut option = OptionMessage::new();
+                option.disable_clipboard = (if text { BoolOption::No } else { BoolOption::Yes }).into();
+                option.enable_file_transfer = (if files { BoolOption::Yes } else { BoolOption::No }).into();
+                let mut misc = Misc::new(); misc.set_option(option);
+                let mut msg = Message::new(); msg.set_misc(misc);
+                if peer.send(&msg).await.is_err() { return false; }
+                if text {
+                    // Explicit human activation, including a copy made before entering.
+                    let snapshot = {
+                        let gate = self.handler.agent.gate.lock().unwrap();
+                        if gate.permits_manual(epoch) && clipboard::access::AUTHORITY.text_token() == Some(token) {
+                            crate::clipboard::check_clipboard(&mut None, ClipboardSide::Client, true)
+                        } else { None }
+                    };
+                    if let Some(msg) = snapshot {
+                        if clipboard::access::AUTHORITY.text_token() == Some(token)
+                            && self.handler.agent.gate.lock().unwrap().permits_manual(epoch) {
+                            if peer.send(&msg).await.is_err() { return false; }
+                        }
+                    }
+                }
+                #[cfg(windows)]
+                if files && clipboard::access::AUTHORITY.file_token() == Some(token) {
+                    ContextSend::enable(true);
+                    let _ = ContextSend::proc(|context| {
+                        context.refresh_file_list(self.client_conn_id).map_err(|e| e.into())
+                    });
+                }
+            }
             #[cfg(feature = "agent")]
             Data::ManualText(epoch, text, held) => {
                 for msg in crate::manual_input::text_messages(text, held) {
@@ -555,6 +704,7 @@ impl<T: InvokeUiSession> Remote<T> {
             }
             #[cfg(feature = "agent")]
             Data::AgentRelease(messages) => {
+                self.clipboard_paste = None;
                 for msg in messages { if peer.send(&msg).await.is_err() { return false; } }
             }
             Data::Close => {
@@ -570,7 +720,14 @@ impl<T: InvokeUiSession> Remote<T> {
             Data::ToggleClipboardFile => {
                 self.check_clipboard_file_context();
             }
-            Data::Message(msg) => {
+            Data::Message(mut msg) => {
+                #[cfg(feature = "agent")]
+                if let Some(message::Union::Misc(misc)) = msg.union.as_mut() {
+                    if let Some(misc::Union::Option(option)) = misc.union.as_mut() {
+                        option.disable_clipboard = (if self.handler.is_text_clipboard_required() { BoolOption::No } else { BoolOption::Yes }).into();
+                        option.enable_file_transfer = (if self.handler.is_file_clipboard_required() { BoolOption::Yes } else { BoolOption::No }).into();
+                    }
+                }
                 #[cfg(feature = "agent")]
                 match &msg.union {
                     Some(message::Union::MouseEvent(_)) | Some(message::Union::KeyEvent(_)) => {
@@ -578,6 +735,14 @@ impl<T: InvokeUiSession> Remote<T> {
                     }
                     Some(message::Union::Clipboard(_)) | Some(message::Union::MultiClipboards(_)) => return true,
                     _ => {}
+                }
+                #[cfg(feature = "agent")]
+                if matches!(msg.union, Some(message::Union::MouseEvent(_)) | Some(message::Union::KeyEvent(_))) {
+                    if self.clipboard_paste_invalid() { self.cancel_clipboard_paste(peer, "").await; }
+                    if let Some(paste) = self.clipboard_paste.as_mut() {
+                        if paste.push(msg).is_err() { self.cancel_clipboard_paste(peer, "Вставка отменена: слишком много ожидающих событий.").await; }
+                        return true;
+                    }
                 }
                 match &msg.union {
                     Some(message::Union::Misc(misc)) => match misc.union {
@@ -1400,7 +1565,7 @@ impl<T: InvokeUiSession> Remote<T> {
                             }
 
                             #[cfg(not(any(target_os = "android", target_os = "ios")))]
-                            if self.handler.lc.read().unwrap().sync_init_clipboard.v {
+                            if !cfg!(feature = "agent") && self.handler.lc.read().unwrap().sync_init_clipboard.v {
                                 if let Some(msg_out) = crate::clipboard::get_current_clipboard_msg(
                                     &peer_version,
                                     &peer_platform,
@@ -1452,9 +1617,14 @@ impl<T: InvokeUiSession> Remote<T> {
                     self.handler.set_cursor_position(cp);
                 }
                 Some(message::Union::Clipboard(cb)) => {
-                    if !cfg!(feature = "agent") && !self.handler.lc.read().unwrap().disable_clipboard.v {
+                    if self.handler.is_text_clipboard_required() {
                         #[cfg(not(any(target_os = "android", target_os = "ios")))]
-                        update_clipboard(vec![cb], ClipboardSide::Client);
+                        {
+                            #[cfg(feature = "agent")]
+                            crate::clipboard::update_human_clipboard(vec![cb], self.handler.get_permission_config());
+                            #[cfg(not(feature = "agent"))]
+                            update_clipboard(vec![cb], ClipboardSide::Client);
+                        }
                         #[cfg(target_os = "ios")]
                         {
                             let content = if cb.compress {
@@ -1471,9 +1641,14 @@ impl<T: InvokeUiSession> Remote<T> {
                     }
                 }
                 Some(message::Union::MultiClipboards(_mcb)) => {
-                    if !cfg!(feature = "agent") && !self.handler.lc.read().unwrap().disable_clipboard.v {
+                    if self.handler.is_text_clipboard_required() {
                         #[cfg(not(any(target_os = "android", target_os = "ios")))]
-                        update_clipboard(_mcb.clipboards, ClipboardSide::Client);
+                        {
+                            #[cfg(feature = "agent")]
+                            crate::clipboard::update_human_clipboard(_mcb.clipboards, self.handler.get_permission_config());
+                            #[cfg(not(feature = "agent"))]
+                            update_clipboard(_mcb.clipboards, ClipboardSide::Client);
+                        }
                         #[cfg(target_os = "android")]
                         crate::clipboard::handle_msg_multi_clipboards(_mcb);
                     }
@@ -1726,6 +1901,10 @@ impl<T: InvokeUiSession> Remote<T> {
                         self.handler.new_message(c.text);
                     }
                     Some(misc::Union::PermissionInfo(p)) => {
+                        #[cfg(feature = "agent")]
+                        let clipboard_permission = matches!(p.permission.enum_value(), Ok(Permission::Keyboard) | Ok(Permission::Clipboard) | Ok(Permission::File));
+                        #[cfg(feature = "agent")]
+                        if clipboard_permission { clipboard::access::AUTHORITY.revoke(); }
                         log::info!("Change permission {:?} -> {}", p.permission, p.enabled);
                         // https://github.com/rustdesk/rustdesk/issues/3703#issuecomment-1474734754
                         match p.permission.enum_value() {
@@ -1778,6 +1957,8 @@ impl<T: InvokeUiSession> Remote<T> {
                             }
                             _ => {}
                         }
+                        #[cfg(feature = "agent")]
+                        if clipboard_permission && self.handler.agent.human_clipboard_allowed() { self.handler.activate_human_clipboard(); }
                     }
                     Some(misc::Union::SwitchDisplay(s)) => {
                         self.handler.handle_peer_switch_display(&s);
@@ -2250,7 +2431,13 @@ impl<T: InvokeUiSession> Remote<T> {
     fn check_clipboard_file_context(&self) {
         let enabled = *self.handler.server_file_transfer_enabled.read().unwrap()
             && self.handler.lc.read().unwrap().enable_file_copy_paste.v;
+        #[cfg(not(feature = "agent"))]
         ContextSend::enable(enabled);
+        #[cfg(feature = "agent")]
+        {
+            if self.handler.agent.human_clipboard_allowed() { self.handler.activate_human_clipboard(); }
+            if enabled && clipboard::access::AUTHORITY.file_token().is_some() { ContextSend::enable(true); }
+        }
     }
 
     #[cfg(any(target_os = "windows", feature = "unix-file-copy-paste"))]
@@ -2260,6 +2447,9 @@ impl<T: InvokeUiSession> Remote<T> {
         _peer: &mut Stream,
     ) {
         log::debug!("handling cliprdr msg from server peer");
+        #[cfg(feature = "agent")]
+        if !self.handler.is_file_clipboard_required() { return; }
+
         #[cfg(feature = "flutter")]
         if let Some(hbb_common::message_proto::cliprdr::Union::FormatList(_)) = &clip.union {
             if self.client_conn_id
@@ -2269,11 +2459,34 @@ impl<T: InvokeUiSession> Remote<T> {
             }
         }
 
-        let Some(clip) = crate::clipboard_file::msg_2_clip(clip) else {
+        let Some(mut clip) = crate::clipboard_file::msg_2_clip(clip) else {
             log::warn!("failed to decode cliprdr msg from server peer");
             return;
         };
 
+        #[cfg(feature = "agent")]
+        if let clipboard::ClipboardFile::FormatListResponse { msg_flags } = &mut clip {
+            let (sequence, flags) = clipboard::access::decode_apply_ack(*msg_flags);
+            let accepted = flags == 1;
+            if self.clipboard_paste_invalid() { self.cancel_clipboard_paste(_peer, "Вставка отменена: разрешение изменилось или истекло ожидание.").await; }
+            if let Some(paste) = self.clipboard_paste.as_mut() {
+                let epoch = paste.epoch;
+                let token = paste.token;
+                match paste.ack(sequence, accepted) {
+                    crate::manual_clipboard::Ack::Ready(messages) => {
+                        self.clipboard_paste = None;
+                        for message in messages {
+                            if !self.handler.agent.gate.lock().unwrap().permits_manual(epoch)
+                                || clipboard::access::AUTHORITY.current() != token { break; }
+                            if _peer.send(&message).await.is_err() { break; }
+                        }
+                    }
+                    crate::manual_clipboard::Ack::Failed => { self.cancel_clipboard_paste(_peer, "Удалённый ПК не смог применить файловый буфер.").await; }
+                    crate::manual_clipboard::Ack::Ignored => {}
+                }
+            }
+            *msg_flags &= 3;
+        }
         let is_stopping_allowed = clip.is_beginning_message();
         let file_transfer_enabled = self.handler.is_file_clipboard_required();
         let stop = is_stopping_allowed && !file_transfer_enabled;

@@ -513,6 +513,7 @@ pub struct _cliprdr_client_context {
     pub ClientFileContentsResponse: pcCliprdrClientFileContentsResponse,
     pub ServerFileContentsResponse: pcCliprdrServerFileContentsResponse,
     pub LastRequestedFormatId: UINT32,
+    pub ClipboardAccessToken: Option<extern "C" fn(*mut CliprdrClientContext) -> u64>,
 }
 
 // #[link(name = "user32")]
@@ -520,6 +521,8 @@ pub struct _cliprdr_client_context {
 extern "C" {
     pub(crate) fn init_cliprdr(context: *mut CliprdrClientContext) -> BOOL;
     pub(crate) fn uninit_cliprdr(context: *mut CliprdrClientContext) -> BOOL;
+    fn sync_cliprdr_formats(context: *mut CliprdrClientContext, conn_id: UINT32) -> UINT;
+    fn cliprdr_callback_token() -> u64;
     pub(crate) fn empty_cliprdr(context: *mut CliprdrClientContext, connID: UINT32) -> BOOL;
 }
 
@@ -570,6 +573,7 @@ impl CliprdrClientContext {
             ClientFileContentsResponse: client_file_contents_response,
             ServerFileContentsResponse: None,
             LastRequestedFormatId: 0,
+            ClipboardAccessToken: Some(clipboard_access_token),
         };
         let mut context = Box::new(context);
         unsafe {
@@ -581,6 +585,20 @@ impl CliprdrClientContext {
             }
         }
     }
+}
+
+pub fn local_files_available() -> bool {
+    #[link(name = "user32")]
+    extern "system" { fn IsClipboardFormatAvailable(format: u32) -> i32; }
+    unsafe { IsClipboardFormatAvailable(15) != 0 }
+}
+
+pub(crate) fn captured_callback_token() -> u64 {
+    unsafe { cliprdr_callback_token() }
+}
+
+extern "C" fn clipboard_access_token(_context: *mut CliprdrClientContext) -> u64 {
+    crate::access::AUTHORITY.file_token().unwrap_or(0)
 }
 
 impl Drop for CliprdrClientContext {
@@ -596,6 +614,11 @@ impl Drop for CliprdrClientContext {
 }
 
 impl CliprdrServiceContext for CliprdrClientContext {
+    fn refresh_file_list(&mut self, conn_id: i32) -> Result<(), CliprdrError> {
+        let result = unsafe { sync_cliprdr_formats(self, conn_id as UINT32) };
+        if result == 0 { Ok(()) } else { Err(CliprdrError::Unknown(result)) }
+    }
+
     fn set_is_stopped(&mut self) -> Result<(), CliprdrError> {
         self.IsStopped = TRUE;
         Ok(())
@@ -1036,7 +1059,8 @@ extern "C" fn handle_clipboard_files(
     n_files: size_t,
     file_names: *mut *mut WCHAR,
 ) -> UINT {
-    if n_files == 0 {
+    let token = captured_callback_token();
+    if n_files == 0 || crate::access::AUTHORITY.file_token() != Some(token) {
         return 0;
     }
 
@@ -1045,6 +1069,7 @@ extern "C" fn handle_clipboard_files(
         use std::ffi::OsString;
         use std::os::windows::ffi::OsStringExt;
         for i in 0..n_files {
+            if crate::access::AUTHORITY.file_token() != Some(token) { return 0; }
             let file_name_ptr = *file_names.offset(i as isize);
             if !file_name_ptr.is_null() {
                 let mut len = 0;
@@ -1090,6 +1115,7 @@ extern "C" fn client_format_list(
     _context: *mut CliprdrClientContext,
     clip_format_list: *const CLIPRDR_FORMAT_LIST,
 ) -> UINT {
+    if crate::access::AUTHORITY.file_token() != Some(captured_callback_token()) { return 0; }
     let conn_id;
     let mut format_list: Vec<(i32, String)> = Vec::new();
     unsafe {
@@ -1123,6 +1149,7 @@ extern "C" fn client_format_list(
     // no need to handle result here
     if conn_id == 0 {
         // msg_channel is used for debug, VEC_MSG_CHANNEL cannot be inspected by the debugger.
+        let Some(data) = crate::ClipboardEvent::capture_native(data) else { return 0; };
         let msg_channel = VEC_MSG_CHANNEL.read().unwrap();
         msg_channel
             .iter()
@@ -1144,18 +1171,21 @@ extern "C" fn client_format_list_response(
     _context: *mut CliprdrClientContext,
     format_list_response: *const CLIPRDR_FORMAT_LIST_RESPONSE,
 ) -> UINT {
+    if crate::access::AUTHORITY.file_token() != Some(captured_callback_token()) { return 0; }
     let conn_id;
     let msg_flags;
+    let operation;
     unsafe {
         conn_id = (*format_list_response).connID as i32;
         msg_flags = (*format_list_response).msgFlags as i32;
+        operation = (*format_list_response).dataLen;
     }
     log::debug!(
         "client_format_list_response called, client id: {}, msg_flags: {}",
         conn_id,
         msg_flags
     );
-    let data = ClipboardFile::FormatListResponse { msg_flags };
+    let data = ClipboardFile::FormatListResponse { msg_flags: crate::access::encode_apply_ack(operation, msg_flags) };
     match send_data(conn_id, data) {
         Ok(_) => 0,
         Err(e) => {
@@ -1169,6 +1199,7 @@ extern "C" fn client_format_data_request(
     _context: *mut CliprdrClientContext,
     format_data_request: *const CLIPRDR_FORMAT_DATA_REQUEST,
 ) -> UINT {
+    if crate::access::AUTHORITY.file_token() != Some(captured_callback_token()) { return 0; }
     let conn_id;
     let requested_format_id;
     unsafe {
@@ -1196,6 +1227,7 @@ extern "C" fn client_format_data_response(
     _context: *mut CliprdrClientContext,
     format_data_response: *const CLIPRDR_FORMAT_DATA_RESPONSE,
 ) -> UINT {
+    if crate::access::AUTHORITY.file_token() != Some(captured_callback_token()) { return 0; }
     let conn_id;
     let msg_flags;
     let format_data;
@@ -1234,6 +1266,7 @@ extern "C" fn client_file_contents_request(
     _context: *mut CliprdrClientContext,
     file_contents_request: *const CLIPRDR_FILE_CONTENTS_REQUEST,
 ) -> UINT {
+    if crate::access::AUTHORITY.file_token() != Some(captured_callback_token()) { return 0; }
     // TODO: support huge file?
     // if (!cliprdr->hasHugeFileSupport)
     // {
@@ -1288,6 +1321,7 @@ extern "C" fn client_file_contents_response(
     _context: *mut CliprdrClientContext,
     file_contents_response: *const CLIPRDR_FILE_CONTENTS_RESPONSE,
 ) -> UINT {
+    if crate::access::AUTHORITY.file_token() != Some(captured_callback_token()) { return 0; }
     let conn_id;
     let msg_flags;
     let stream_id;

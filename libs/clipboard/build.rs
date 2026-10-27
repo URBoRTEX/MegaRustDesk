@@ -27,6 +27,7 @@ fn build_c_impl() {
     }
 
     println!("cargo:rerun-if-changed=src/windows/wf_cliprdr.c");
+    println!("cargo:rerun-if-changed=src/cliprdr.h");
 }
 
 fn main() {

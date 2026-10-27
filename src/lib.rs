@@ -3,6 +3,8 @@ mod keyboard;
 pub mod agent;
 #[cfg(feature = "agent")]
 pub mod manual_input;
+#[cfg(feature = "agent")]
+pub mod manual_clipboard;
 /// cbindgen:ignore
 pub mod platform;
 #[cfg(not(any(target_os = "android", target_os = "ios")))]

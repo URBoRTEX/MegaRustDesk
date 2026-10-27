@@ -23,7 +23,7 @@ use serde_json::{json, Value};
 use std::{
     collections::VecDeque,
     sync::{
-        atomic::{AtomicBool, AtomicUsize, Ordering},
+        atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering},
         Arc, Mutex,
     },
     time::{Duration, Instant},
@@ -94,6 +94,7 @@ pub struct Agent {
     pub endpoint: Mutex<Option<(u16, String)>>,
     pub controller: Mutex<Option<String>>,
     pub controller_pid: AtomicUsize,
+    pub human_clipboard_epoch: AtomicU64,
 }
 
 impl Default for Agent {
@@ -112,6 +113,7 @@ impl Default for Agent {
             endpoint: Mutex::new(None),
             controller: Mutex::new(None),
             controller_pid: AtomicUsize::new(0),
+            human_clipboard_epoch: AtomicU64::new(u64::MAX),
         }
     }
 }
@@ -138,6 +140,7 @@ impl Agent {
             return;
         }
         if rgba.w.saturating_mul(rgba.h) > 33_554_432 {
+            clipboard::access::AUTHORITY.revoke();
             g.pause();
             return;
         }
@@ -178,9 +181,16 @@ impl Agent {
             Instant::now(),
         );
     }
+    pub fn human_clipboard_allowed(&self) -> bool {
+        self.gate.lock().unwrap().permits_manual(self.human_clipboard_epoch.load(Ordering::SeqCst))
+    }
     pub fn disconnect(&self) {
+        clipboard::access::AUTHORITY.revoke();
         self.receive_frames.store(false, Ordering::SeqCst);
-        self.gate.lock().unwrap().disconnect();
+        let mut gate = self.gate.lock().unwrap();
+        clipboard::access::AUTHORITY.revoke();
+        gate.disconnect();
+        drop(gate);
         self.message(
             "Связь потеряна. Ввод остановлен; последнее действие автоматически не повторяется.",
         );
@@ -234,10 +244,14 @@ fn release(session: &Session<SciterHandler>) {
 
 pub fn control(session: &Session<SciterHandler>, command: &str, _task: &str) -> Result<(), String> {
     attach(session.clone());
+    if ["start", "resume", "pause", "stop", "manual", "exit"].contains(&command) {
+        clipboard::access::AUTHORITY.revoke();
+    }
     match command {
         "start" | "resume" => {
             {
                 let mut gate = session.agent.gate.lock().unwrap();
+                clipboard::access::AUTHORITY.revoke();
                 gate.start().map_err(str::to_owned)?;
                 *session.agent.controller.lock().unwrap() = None;
                 session.agent.controller_pid.store(0,Ordering::SeqCst);
@@ -249,6 +263,7 @@ pub fn control(session: &Session<SciterHandler>, command: &str, _task: &str) -> 
         "pause" | "stop" | "manual" => {
             {
                 let mut g = session.agent.gate.lock().unwrap();
+                clipboard::access::AUTHORITY.revoke();
                 match command {
                     "pause" => g.pause(),
                     "manual" => g.manual(),
@@ -259,7 +274,11 @@ pub fn control(session: &Session<SciterHandler>, command: &str, _task: &str) -> 
             session.leave(session.get_keyboard_mode());
         }
         "exit" => {
-            session.agent.gate.lock().unwrap().stop();
+            {
+                let mut gate = session.agent.gate.lock().unwrap();
+                clipboard::access::AUTHORITY.revoke();
+                gate.stop();
+            }
             release(session);
             session.agent.shutdown.store(true, Ordering::SeqCst);
             mcp::unpublish(&session.agent);
@@ -267,6 +286,7 @@ pub fn control(session: &Session<SciterHandler>, command: &str, _task: &str) -> 
         }
         _ => return Err("Неизвестное действие".into()),
     }
+    session.notify_human_clipboard();
     Ok(())
 }
 

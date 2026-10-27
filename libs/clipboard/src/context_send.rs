@@ -33,6 +33,7 @@ impl ContextSend {
     pub fn enable(enabled: bool) {
         let mut lock = CONTEXT_SEND.lock().unwrap();
         if enabled {
+            if !crate::access::human_managed() { crate::access::AUTHORITY.grant(true, true); }
             if lock.is_some() {
                 return;
             }
@@ -49,6 +50,8 @@ impl ContextSend {
                 }
             }
         } else if let Some(_clp) = lock.take() {
+            // Abort pending OLE waits before uninit joins the native thread.
+            crate::access::AUTHORITY.revoke();
             *lock = None;
             log::info!("clipboard context for file transfer destroyed.");
         }
@@ -61,6 +64,7 @@ impl ContextSend {
             return Ok(());
         }
 
+        if !crate::access::human_managed() { crate::access::AUTHORITY.grant(true, true); }
         let ctx = crate::create_cliprdr_context(true, false, CLIPBOARD_RESPONSE_WAIT_TIMEOUT_SECS)?;
         *lock = Some(ctx);
         log::info!("clipboard context for file transfer recreated.");

@@ -183,6 +183,7 @@ struct _CliprdrStream
 	FILEDESCRIPTORW m_Dsc;
 	void *m_pData;
 	UINT32 m_connID;
+	UINT64 m_access_token;
 };
 typedef struct _CliprdrStream CliprdrStream;
 
@@ -199,6 +200,7 @@ struct _CliprdrDataObject
 	void *m_pData;
 	DWORD m_processID;
 	UINT32 m_connID;
+	UINT64 m_access_token;
 };
 typedef struct _CliprdrDataObject CliprdrDataObject;
 
@@ -250,6 +252,27 @@ struct wf_clipboard
 	fnGetUpdatedClipboardFormats GetUpdatedClipboardFormats;
 };
 typedef struct wf_clipboard wfClipboard;
+
+// The native operation carries its captured grant into the Rust callback.
+// Thread-local storage avoids sharing a callback token between OLE/IO threads.
+__declspec(thread) static UINT64 clipboard_callback_generation = 0;
+UINT64 cliprdr_callback_token(void) { return clipboard_callback_generation; }
+
+// Human-viewer suspension. A zero token denies access; tokens never revive
+// across a revoke/regrant. Upstream/CM contexts use their default token.
+static UINT64 wf_cliprdr_access_token(CliprdrClientContext *context)
+{
+    return context && context->ClipboardAccessToken ? context->ClipboardAccessToken(context) : 0;
+}
+static UINT64 wf_cliprdr_token(wfClipboard *clipboard)
+{
+    return clipboard ? wf_cliprdr_access_token(clipboard->context) : 0;
+}
+static BOOL wf_cliprdr_same_access(wfClipboard *clipboard, UINT64 token)
+{
+    return token != 0 && wf_cliprdr_token(clipboard) == token;
+}
+
 
 #define WM_CLIPRDR_MESSAGE (WM_USER + 156)
 #define OLE_SETCLIPBOARD 1
@@ -357,6 +380,7 @@ static HRESULT STDMETHODCALLTYPE CliprdrStream_Read(IStream *This, void *pv, ULO
 
 	clipboard = (wfClipboard *)instance->m_pData;
 	*pcbRead = 0;
+	if (!wf_cliprdr_same_access(clipboard, instance->m_access_token)) return E_ABORT;
 
 	if (instance->m_lOffset.QuadPart >= instance->m_lSize.QuadPart)
 		return S_FALSE;
@@ -576,6 +600,7 @@ static CliprdrStream *CliprdrStream_New(UINT32 connID, ULONG index, void *pData,
 			instance->m_lRefCount = 1;
 			instance->m_lIndex = index;
 			instance->m_pData = pData;
+			instance->m_access_token = wf_cliprdr_token(clipboard);
 			instance->m_lOffset.QuadPart = 0;
 			instance->m_connID = connID;
 
@@ -720,6 +745,7 @@ static HRESULT STDMETHODCALLTYPE CliprdrDataObject_GetData(IDataObject *This, FO
 	}
 
 	clipboard = (wfClipboard *)instance->m_pData;
+	if (!wf_cliprdr_same_access(clipboard, instance->m_access_token)) return E_ABORT;
 
 	if (!clipboard)
 		return E_INVALIDARG;
@@ -945,6 +971,7 @@ static CliprdrDataObject *CliprdrDataObject_New(UINT32 connID, FORMATETC *fmtetc
 	instance->m_lRefCount = 1;
 	instance->m_nNumFormats = count;
 	instance->m_pData = data;
+	instance->m_access_token = wf_cliprdr_token((wfClipboard *)data);
 	instance->m_nStreams = 0;
 	instance->m_pStream = NULL;
 	instance->m_processID = GetCurrentProcessId();
@@ -1425,6 +1452,8 @@ static BOOL cliprdr_GetUpdatedClipboardFormats(wfClipboard *clipboard, PUINT lpu
 
 static UINT cliprdr_send_format_list(wfClipboard *clipboard, UINT32 connID)
 {
+	const UINT64 access_token = wf_cliprdr_token(clipboard);
+	if (!access_token) return ERROR_ACCESS_DENIED;
 	UINT rc;
 	int count = 0;
 	UINT32 index;
@@ -1499,6 +1528,7 @@ static UINT cliprdr_send_format_list(wfClipboard *clipboard, UINT32 connID)
 	formatList.msgType = CB_FORMAT_LIST;
 
 	// send
+	clipboard_callback_generation = access_token;
 	rc = clipboard->context->ClientFormatList(clipboard->context, &formatList);
 	// No need to check `rc`, `copied` is only used to indicate `Ctrl+C` is pressed.
 	clipboard->copied = TRUE;
@@ -1546,16 +1576,19 @@ UINT try_reset_event(HANDLE event)
 	}
 }
 
-UINT wait_response_event(UINT32 connID, wfClipboard *clipboard, HANDLE event, BOOL* recvedFlag, void **data)
+UINT wait_response_event(UINT32 connID, wfClipboard *clipboard, HANDLE event, BOOL* recvedFlag, void **data, UINT64 access_token)
 {
 	UINT rc = ERROR_SUCCESS;
+	if (!wf_cliprdr_same_access(clipboard, access_token)) return ERROR_ACCESS_DENIED;
 	clipboard->context->IsStopped = FALSE;
 	DWORD waitOnceTimeoutMillis = 50;
 	int waitCount = 1000 * clipboard->context->ResponseWaitTimeoutSecs / waitOnceTimeoutMillis;
 	int i = 0;
 	for (; i < waitCount; i++)
 	{
+		if (!wf_cliprdr_same_access(clipboard, access_token)) return ERROR_ACCESS_DENIED;
 		DWORD waitRes = WaitForSingleObject(event, waitOnceTimeoutMillis);
+		if (!wf_cliprdr_same_access(clipboard, access_token)) return ERROR_ACCESS_DENIED;
 		if (waitRes == WAIT_TIMEOUT && clipboard->context->IsStopped == FALSE)
 		{
 			if ((*recvedFlag) == TRUE) {
@@ -1622,6 +1655,8 @@ UINT wait_response_event(UINT32 connID, wfClipboard *clipboard, HANDLE event, BO
 
 static UINT cliprdr_send_data_request(UINT32 connID, wfClipboard *clipboard, UINT32 formatId)
 {
+	const UINT64 access_token = wf_cliprdr_token(clipboard);
+	if (!access_token) return ERROR_ACCESS_DENIED;
 	UINT rc;
 	UINT32 remoteFormatId;
 	CLIPRDR_FORMAT_DATA_REQUEST formatDataRequest;
@@ -1641,19 +1676,22 @@ static UINT cliprdr_send_data_request(UINT32 connID, wfClipboard *clipboard, UIN
 	formatDataRequest.connID = connID;
 	formatDataRequest.requestedFormatId = remoteFormatId;
 	clipboard->requestedFormatId = formatId;
+	clipboard_callback_generation = access_token;
 	rc = clipboard->context->ClientFormatDataRequest(clipboard->context, &formatDataRequest);
 	if (rc != ERROR_SUCCESS)
 	{
 		return rc;
 	}
 
-	return wait_response_event(connID, clipboard, clipboard->formatDataRespEvent, &clipboard->formatDataRespReceived, &clipboard->hmem);
+	return wait_response_event(connID, clipboard, clipboard->formatDataRespEvent, &clipboard->formatDataRespReceived, &clipboard->hmem, access_token);
 }
 
 UINT cliprdr_send_request_filecontents(wfClipboard *clipboard, UINT32 connID, const void *streamid, ULONG index,
 									   UINT32 flag, DWORD positionhigh, DWORD positionlow,
 									   ULONG nreq)
 {
+	const UINT64 access_token = wf_cliprdr_token(clipboard);
+	if (!access_token) return ERROR_ACCESS_DENIED;
 	UINT rc;
 	CLIPRDR_FILE_CONTENTS_REQUEST fileContentsRequest;
 
@@ -1679,13 +1717,14 @@ UINT cliprdr_send_request_filecontents(wfClipboard *clipboard, UINT32 connID, co
 	fileContentsRequest.cbRequested = nreq;
 	fileContentsRequest.clipDataId = 0;
 	fileContentsRequest.msgFlags = 0;
+	clipboard_callback_generation = access_token;
 	rc = clipboard->context->ClientFileContentsRequest(clipboard->context, &fileContentsRequest);
 	if (rc != ERROR_SUCCESS)
 	{
 		return rc;
 	}
 
-	return wait_response_event(connID, clipboard, clipboard->req_fevent, &clipboard->req_f_received, (void **)&clipboard->req_fdata);
+	return wait_response_event(connID, clipboard, clipboard->req_fevent, &clipboard->req_f_received, (void **)&clipboard->req_fdata, access_token);
 }
 
 static UINT cliprdr_send_response_filecontents(
@@ -1694,7 +1733,7 @@ static UINT cliprdr_send_response_filecontents(
 	UINT16 msgFlags,
 	UINT32 streamId,
 	UINT32 size,
-	BYTE *data)
+	BYTE *data, UINT64 access_token)
 {
 	CLIPRDR_FILE_CONTENTS_RESPONSE fileContentsResponse;
 
@@ -1710,12 +1749,14 @@ static UINT cliprdr_send_response_filecontents(
 	fileContentsResponse.cbRequested = size;
 	fileContentsResponse.requestedData = data;
 	fileContentsResponse.msgFlags = msgFlags;
+	clipboard_callback_generation = access_token;
 	return clipboard->context->ClientFileContentsResponse(clipboard->context,
 														  &fileContentsResponse);
 }
 
 static LRESULT CALLBACK cliprdr_proc(HWND hWnd, UINT Msg, WPARAM wParam, LPARAM lParam)
 {
+    UINT64 queued_access_token = 0;
 	static wfClipboard *clipboard = NULL;
 
 	switch (Msg)
@@ -1747,6 +1788,7 @@ static LRESULT CALLBACK cliprdr_proc(HWND hWnd, UINT Msg, WPARAM wParam, LPARAM 
 		break;
 
 	case WM_CLIPBOARDUPDATE:
+		if (!wf_cliprdr_token(clipboard)) break;
 		DEBUG_CLIPRDR("info: WM_CLIPBOARDUPDATE");
 		// if (clipboard->sync)
 		{
@@ -1765,6 +1807,7 @@ static LRESULT CALLBACK cliprdr_proc(HWND hWnd, UINT Msg, WPARAM wParam, LPARAM 
 		break;
 
 	case WM_RENDERALLFORMATS:
+		if (!wf_cliprdr_token(clipboard)) break;
 		DEBUG_CLIPRDR("info: WM_RENDERALLFORMATS");
 
 		/* discard all contexts in clipboard */
@@ -1779,6 +1822,7 @@ static LRESULT CALLBACK cliprdr_proc(HWND hWnd, UINT Msg, WPARAM wParam, LPARAM 
 		break;
 
 	case WM_RENDERFORMAT:
+		if (!wf_cliprdr_token(clipboard)) break;
 		DEBUG_CLIPRDR("info: WM_RENDERFORMAT");
 
 		// https://docs.microsoft.com/en-us/windows/win32/dataxchg/wm-renderformat?redirectedfrom=MSDN
@@ -1804,6 +1848,10 @@ static LRESULT CALLBACK cliprdr_proc(HWND hWnd, UINT Msg, WPARAM wParam, LPARAM 
 		break;
 
 	case WM_DRAWCLIPBOARD:
+		if (!wf_cliprdr_token(clipboard)) {
+			if (clipboard->legacyApi) SendMessage(clipboard->hWndNextViewer, Msg, wParam, lParam);
+			break;
+		}
 		if (clipboard->legacyApi)
 		{
 			if ((GetClipboardOwner() != clipboard->hwnd) &&
@@ -1832,6 +1880,15 @@ static LRESULT CALLBACK cliprdr_proc(HWND hWnd, UINT Msg, WPARAM wParam, LPARAM 
 		break;
 
 	case WM_CLIPRDR_MESSAGE:
+        {
+            queued_access_token = ((UINT64)wParam) >> 8;
+            wParam &= 0xff;
+            if (!wf_cliprdr_same_access(clipboard, queued_access_token)) {
+                if (wParam == DELAYED_RENDERING && lParam) free(((FORMAT_IDS *)lParam)->formats);
+                free((void *)lParam);
+                break;
+            }
+        }
 		DEBUG_CLIPRDR("info: WM_CLIPRDR_MESSAGE");
 
 		switch (wParam)
@@ -1851,7 +1908,16 @@ static LRESULT CALLBACK cliprdr_proc(HWND hWnd, UINT Msg, WPARAM wParam, LPARAM 
 			}
 			if (wf_create_file_obj((UINT32 *)lParam, clipboard, &clipboard->data_obj))
 			{
-				HRESULT res = OleSetClipboard(clipboard->data_obj);
+				((CliprdrDataObject *)clipboard->data_obj)->m_access_token = queued_access_token;
+                HRESULT res = wf_cliprdr_same_access(clipboard, queued_access_token) ? OleSetClipboard(clipboard->data_obj) : E_ABORT;
+                if (clipboard->context->ClientFormatListResponse) {
+                    CLIPRDR_FORMAT_LIST_RESPONSE response = {0};
+                    response.connID = ((UINT32 *)lParam)[0];
+                    response.dataLen = ((UINT32 *)lParam)[1];
+                    response.msgFlags = res == S_OK ? CB_RESPONSE_OK : CB_RESPONSE_FAIL;
+                    clipboard_callback_generation = queued_access_token;
+                    clipboard->context->ClientFormatListResponse(clipboard->context, &response);
+                }
 				if (res != S_OK)
 				{
 					wf_destroy_file_obj(clipboard->data_obj);
@@ -2156,6 +2222,8 @@ static BOOL wf_cliprdr_array_ensure_capacity(wfClipboard *clipboard)
 static BOOL wf_cliprdr_add_to_file_arrays(wfClipboard *clipboard, WCHAR *full_file_name,
 										  size_t pathLen)
 {
+	const UINT64 access_token = wf_cliprdr_token(clipboard);
+	if (!access_token) return FALSE;
 	if (!wf_cliprdr_array_ensure_capacity(clipboard))
 		return FALSE;
 
@@ -2192,6 +2260,8 @@ static BOOL wf_cliprdr_add_to_file_arrays(wfClipboard *clipboard, WCHAR *full_fi
 
 static BOOL wf_cliprdr_traverse_directory(wfClipboard *clipboard, WCHAR *Dir, size_t pathLen)
 {
+	const UINT64 access_token = wf_cliprdr_token(clipboard);
+	if (!access_token) return FALSE;
 	HANDLE hFind;
 	WCHAR DirSpec[MAX_PATH];
 	WIN32_FIND_DATA FindFileData;
@@ -2214,7 +2284,7 @@ static BOOL wf_cliprdr_traverse_directory(wfClipboard *clipboard, WCHAR *Dir, si
 		return FALSE;
 	}
 
-	while (FindNextFileW(hFind, &FindFileData))
+	while (wf_cliprdr_same_access(clipboard, access_token) && FindNextFileW(hFind, &FindFileData))
 	{
 		// if ((FindFileData.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0 &&
 		//         wcscmp(FindFileData.cFileName, _T(".")) == 0 ||
@@ -2349,8 +2419,11 @@ static UINT wf_cliprdr_server_capabilities(CliprdrClientContext *context,
 static UINT wf_cliprdr_server_format_list(CliprdrClientContext *context,
 										  const CLIPRDR_FORMAT_LIST *formatList)
 {
+	const UINT64 access_token = wf_cliprdr_access_token(context);
+	if (!access_token) return ERROR_ACCESS_DENIED;
 	UINT rc = ERROR_INTERNAL_ERROR;
 	UINT32 i;
+	UINT32 operation_id = 0;
 	formatMapping *mapping;
 	CLIPRDR_FORMAT *format;
 	wfClipboard *clipboard = NULL;
@@ -2370,7 +2443,11 @@ static UINT wf_cliprdr_server_format_list(CliprdrClientContext *context,
 	for (i = 0; i < formatList->numFormats; i++)
 	{
 		format = &(formatList->formats[i]);
-		mapping = &(clipboard->format_mappings[i]);
+        if (format->formatName && strcmp(format->formatName, "MegaRustDesk-Clipboard-Sequence") == 0) {
+            operation_id = format->formatId & 0x3fffffff;
+            continue;
+        }
+		mapping = &(clipboard->format_mappings[clipboard->map_size]);
 		mapping->remote_format_id = format->formatId;
 
 		if (format->formatName)
@@ -2400,10 +2477,11 @@ static UINT wf_cliprdr_server_format_list(CliprdrClientContext *context,
 	{
 		if (context->EnableFiles)
 		{
-			UINT32 *p_conn_id = (UINT32 *)calloc(1, sizeof(UINT32));
+			UINT32 *p_conn_id = (UINT32 *)calloc(2, sizeof(UINT32));
 			if (p_conn_id) {
 				*p_conn_id = formatList->connID;
-				if (PostMessage(clipboard->hwnd, WM_CLIPRDR_MESSAGE, OLE_SETCLIPBOARD, p_conn_id))
+                p_conn_id[1] = operation_id;
+				if (PostMessage(clipboard->hwnd, WM_CLIPRDR_MESSAGE, (WPARAM)((access_token << 8) | OLE_SETCLIPBOARD), p_conn_id))
 					rc = CHANNEL_RC_OK;
 			}
 		}
@@ -2437,7 +2515,7 @@ static UINT wf_cliprdr_server_format_list(CliprdrClientContext *context,
 						{
 							format_ids->formats[i] = clipboard->format_mappings[i].local_format_id;
 						}
-						if (PostMessage(clipboard->hwnd, WM_CLIPRDR_MESSAGE, DELAYED_RENDERING, format_ids))
+						if (PostMessage(clipboard->hwnd, WM_CLIPRDR_MESSAGE, (WPARAM)((access_token << 8) | DELAYED_RENDERING), format_ids))
 						{
 							rc = CHANNEL_RC_OK;
 						}
@@ -2557,6 +2635,8 @@ static UINT
 wf_cliprdr_server_format_data_request(CliprdrClientContext *context,
 									  const CLIPRDR_FORMAT_DATA_REQUEST *formatDataRequest)
 {
+	const UINT64 access_token = wf_cliprdr_access_token(context);
+	if (!access_token) return ERROR_ACCESS_DENIED;
 	UINT rc = ERROR_SUCCESS;
 	size_t size = 0;
 	void *buff = NULL;
@@ -2736,6 +2816,7 @@ exit:
 	response.connID = formatDataRequest->connID;
 	response.dataLen = size;
 	response.requestedFormatData = (BYTE *)buff;
+	clipboard_callback_generation = access_token;
 	if (ERROR_SUCCESS != clipboard->context->ClientFormatDataResponse(clipboard->context, &response))
 	{
 		// CAUTION: if failed to send, server will wait a long time, default 30 seconds.
@@ -2833,6 +2914,8 @@ static UINT
 wf_cliprdr_server_file_contents_request(CliprdrClientContext *context,
 										const CLIPRDR_FILE_CONTENTS_REQUEST *fileContentsRequest)
 {
+	const UINT64 access_token = wf_cliprdr_access_token(context);
+	if (!access_token) return ERROR_ACCESS_DENIED;
 	DWORD uSize = 0;
 	BYTE *pData = NULL;
 	HRESULT hRet = S_OK;
@@ -2980,6 +3063,7 @@ wf_cliprdr_server_file_contents_request(CliprdrClientContext *context,
 				fileContentsRequest->listIndex == (UINT32)clipboard->first_file_index &&
 				fileContentsRequest->nPositionLow == 0 &&
 				fileContentsRequest->nPositionHigh == 0) {
+				clipboard_callback_generation = access_token;
 				clipboard->context->HandleClipboardFiles(fileContentsRequest->connID, clipboard->nFiles, clipboard->file_names);
 			}
 
@@ -2988,7 +3072,7 @@ wf_cliprdr_server_file_contents_request(CliprdrClientContext *context,
 			hRet = IStream_Seek(pStreamStc, dlibMove, STREAM_SEEK_SET, &dlibNewPosition);
 
 			if (SUCCEEDED(hRet))
-				hRet = IStream_Read(pStreamStc, pData, cbRequested, (PULONG)&uSize);
+				hRet = wf_cliprdr_same_access(clipboard, access_token) ? IStream_Read(pStreamStc, pData, cbRequested, (PULONG)&uSize) : E_ABORT;
 		}
 	}
 	else
@@ -3019,8 +3103,10 @@ wf_cliprdr_server_file_contents_request(CliprdrClientContext *context,
 				fileContentsRequest->listIndex == (UINT32)clipboard->first_file_index &&
 				fileContentsRequest->nPositionLow == 0 &&
 				fileContentsRequest->nPositionHigh == 0) {
+				clipboard_callback_generation = access_token;
 				clipboard->context->HandleClipboardFiles(fileContentsRequest->connID, clipboard->nFiles, clipboard->file_names);
 			}
+			if (!wf_cliprdr_same_access(clipboard, access_token)) { rc = ERROR_ACCESS_DENIED; goto exit; }
 			bRet = wf_cliprdr_get_file_contents(
 				clipboard->file_names[fileContentsRequest->listIndex], pData,
 				fileContentsRequest->nPositionLow, fileContentsRequest->nPositionHigh, cbRequested,
@@ -3070,7 +3156,7 @@ exit:
 			rc == CHANNEL_RC_OK ? CB_RESPONSE_OK : CB_RESPONSE_FAIL,
 			fileContentsRequest->streamId,
 			uSize,
-			pData);
+			pData, access_token);
 
 	if (pData)
 	{
@@ -3279,6 +3365,7 @@ BOOL wf_cliprdr_uninit(wfClipboard *clipboard, CliprdrClientContext *cliprdr)
 	clear_file_array(clipboard);
 	clear_format_map(clipboard);
 	free(clipboard->format_mappings);
+	clipboard->context = NULL;
 	return TRUE;
 }
 
@@ -3377,4 +3464,10 @@ BOOL wf_do_empty_cliprdr(wfClipboard *clipboard)
 		// critical error!!!
 	}
 	return rc;
+}
+
+UINT sync_cliprdr_formats(CliprdrClientContext *context, UINT32 connID)
+{
+    if (!wf_cliprdr_access_token(context)) return ERROR_ACCESS_DENIED;
+    return cliprdr_send_format_list((wfClipboard *)context->Custom, connID);
 }

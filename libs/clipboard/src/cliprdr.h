@@ -238,6 +238,7 @@ extern "C"
         pcCliprdrServerFileContentsResponse ServerFileContentsResponse;
 
         UINT32 LastRequestedFormatId;
+        UINT64 (*ClipboardAccessToken)(CliprdrClientContext *context);
     };
 
 #ifdef __cplusplus

@@ -23,6 +23,7 @@ use thiserror::Error;
 ))]
 pub mod context_send;
 pub mod platform;
+pub mod access;
 #[cfg(any(
     target_os = "windows",
     all(target_os = "macos", feature = "unix-file-copy-paste")
@@ -56,6 +57,7 @@ pub struct ProgressPercent {
 /// but this only contains the RPC server part.
 /// The local listener and transport part is too platform specific to wrap up in typeclasses.
 pub trait CliprdrServiceContext: Send + Sync {
+    fn refresh_file_list(&mut self, _conn_id: i32) -> Result<(), CliprdrError> { Ok(()) }
     /// set to be stopped
     fn set_is_stopped(&mut self) -> Result<(), CliprdrError>;
     /// clear the content on clipboard
@@ -137,12 +139,31 @@ pub enum ClipboardFile {
     },
 }
 
+/// Captured at callback enqueue, never at dequeue.
+#[derive(Clone, Debug)]
+pub struct ClipboardEvent {
+    pub token: u64,
+    pub message: ClipboardFile,
+}
+impl ClipboardEvent {
+    pub fn capture(message: ClipboardFile) -> Option<Self> {
+        let token = access::AUTHORITY.file_token()?;
+        Some(Self { token, message })
+    }
+    pub fn capture_native(message: ClipboardFile) -> Option<Self> {
+        let event = Self::capture(message)?;
+        #[cfg(windows)]
+        if platform::windows::captured_callback_token() != event.token { return None; }
+        Some(event)
+    }
+}
+
 struct MsgChannel {
     peer_id: String,
     conn_id: i32,
     #[allow(dead_code)]
-    sender: UnboundedSender<ClipboardFile>,
-    receiver: Arc<TokioMutex<UnboundedReceiver<ClipboardFile>>>,
+    sender: UnboundedSender<ClipboardEvent>,
+    receiver: Arc<TokioMutex<UnboundedReceiver<ClipboardEvent>>>,
 }
 
 lazy_static::lazy_static! {
@@ -185,7 +206,7 @@ fn get_conn_id() -> i32 {
 
 pub fn get_rx_cliprdr_client(
     peer_id: &str,
-) -> (i32, Arc<TokioMutex<UnboundedReceiver<ClipboardFile>>>) {
+) -> (i32, Arc<TokioMutex<UnboundedReceiver<ClipboardEvent>>>) {
     let mut lock = VEC_MSG_CHANNEL.write().unwrap();
     match lock.iter().find(|x| x.peer_id == peer_id) {
         Some(msg_channel) => (msg_channel.conn_id, msg_channel.receiver.clone()),
@@ -206,7 +227,7 @@ pub fn get_rx_cliprdr_client(
     }
 }
 
-pub fn get_rx_cliprdr_server(conn_id: i32) -> Arc<TokioMutex<UnboundedReceiver<ClipboardFile>>> {
+pub fn get_rx_cliprdr_server(conn_id: i32) -> Arc<TokioMutex<UnboundedReceiver<ClipboardEvent>>> {
     let mut lock = VEC_MSG_CHANNEL.write().unwrap();
     match lock.iter().find(|x| x.conn_id == conn_id) {
         Some(msg_channel) => msg_channel.receiver.clone(),
@@ -250,6 +271,7 @@ pub fn send_data(conn_id: i32, data: ClipboardFile) -> Result<(), CliprdrError> 
 #[inline]
 #[cfg(any(target_os = "windows", feature = "unix-file-copy-paste"))]
 fn send_data_to_channel(conn_id: i32, data: ClipboardFile) -> Result<(), CliprdrError> {
+    let Some(data) = ClipboardEvent::capture_native(data) else { return Ok(()); };
     if let Some(msg_channel) = VEC_MSG_CHANNEL
         .read()
         .unwrap()
@@ -272,6 +294,7 @@ fn send_data_to_channel(conn_id: i32, data: ClipboardFile) -> Result<(), Cliprdr
 #[inline]
 #[cfg(target_os = "windows")]
 pub fn send_data_exclude(conn_id: i32, data: ClipboardFile) {
+    let Some(data) = ClipboardEvent::capture(data) else { return; };
     // Need more tests to see if it's necessary to handle the error.
     for msg_channel in VEC_MSG_CHANNEL.read().unwrap().iter() {
         if msg_channel.conn_id != conn_id {
@@ -283,6 +306,7 @@ pub fn send_data_exclude(conn_id: i32, data: ClipboardFile) {
 #[inline]
 #[cfg(feature = "unix-file-copy-paste")]
 fn send_data_to_all(data: ClipboardFile) {
+    let Some(data) = ClipboardEvent::capture(data) else { return; };
     // Need more tests to see if it's necessary to handle the error.
     for msg_channel in VEC_MSG_CHANNEL.read().unwrap().iter() {
         allow_err!(msg_channel.sender.send(data.clone()));

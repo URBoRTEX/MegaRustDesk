@@ -196,7 +196,7 @@ pub fn check_clipboard_cm() -> ResultType<MultiClipboards> {
 }
 
 #[cfg(not(target_os = "android"))]
-fn update_clipboard_(multi_clipboards: Vec<Clipboard>, side: ClipboardSide) {
+pub(crate) fn update_clipboard_(multi_clipboards: Vec<Clipboard>, side: ClipboardSide) {
     let to_update_data = proto::from_multi_clipbards(multi_clipboards);
     if to_update_data.is_empty() {
         return;
@@ -235,6 +235,24 @@ fn do_update_clipboard_(mut to_update_data: Vec<ClipboardData>, side: ClipboardS
 pub fn update_clipboard(multi_clipboards: Vec<Clipboard>, side: ClipboardSide) {
     std::thread::spawn(move || {
         update_clipboard_(multi_clipboards, side);
+    });
+}
+
+/// Captured receiver event; recheck inside the worker before any local write.
+#[cfg(feature = "agent")]
+pub fn update_human_clipboard(multi_clipboards: Vec<Clipboard>, cfg: crate::ui_session_interface::SessionPermissionConfig) {
+    let agent = cfg.agent.clone();
+    let epoch = agent.human_clipboard_epoch.load(std::sync::atomic::Ordering::SeqCst);
+    let Some(token) = clipboard::access::AUTHORITY.text_token() else { return; };
+    std::thread::spawn(move || {
+        let gate = agent.gate.lock().unwrap();
+        if gate.permits_manual(epoch) && clipboard::access::AUTHORITY.text_token() == Some(token)
+            && *cfg.server_keyboard_enabled.read().unwrap()
+            && *cfg.server_clipboard_enabled.read().unwrap()
+            && !cfg.lc.read().unwrap().view_only.v
+            && !cfg.lc.read().unwrap().disable_clipboard.v {
+            update_clipboard_(multi_clipboards, ClipboardSide::Client);
+        }
     });
 }
 

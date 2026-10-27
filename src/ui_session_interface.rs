@@ -67,6 +67,8 @@ pub struct Session<T: InvokeUiSession> {
 
 #[derive(Clone)]
 pub struct SessionPermissionConfig {
+    #[cfg(feature = "agent")]
+    pub agent: Arc<crate::agent::Agent>,
     pub lc: Arc<RwLock<LoginConfigHandler>>,
     pub server_keyboard_enabled: Arc<RwLock<bool>>,
     pub server_file_transfer_enabled: Arc<RwLock<bool>>,
@@ -163,16 +165,22 @@ impl ChangeDisplayRecord {
 #[cfg(not(any(target_os = "android", target_os = "ios")))]
 impl SessionPermissionConfig {
     pub fn is_text_clipboard_required(&self) -> bool {
-        !cfg!(feature = "agent") && *self.server_clipboard_enabled.read().unwrap()
+        #[cfg(feature = "agent")]
+        if !self.agent.human_clipboard_allowed() || clipboard::access::AUTHORITY.text_token().is_none() { return false; }
+        *self.server_clipboard_enabled.read().unwrap()
             && *self.server_keyboard_enabled.read().unwrap()
             && !self.lc.read().unwrap().disable_clipboard.v
+            && !self.lc.read().unwrap().view_only.v
     }
 
     #[cfg(feature = "unix-file-copy-paste")]
     pub fn is_file_clipboard_required(&self) -> bool {
-        !cfg!(feature = "agent") && *self.server_keyboard_enabled.read().unwrap()
+        #[cfg(feature = "agent")]
+        if !self.agent.human_clipboard_allowed() || clipboard::access::AUTHORITY.file_token().is_none() { return false; }
+        *self.server_keyboard_enabled.read().unwrap()
             && *self.server_file_transfer_enabled.read().unwrap()
             && self.lc.read().unwrap().enable_file_copy_paste.v
+            && !self.lc.read().unwrap().view_only.v
     }
 }
 
@@ -180,6 +188,8 @@ impl<T: InvokeUiSession> Session<T> {
     #[cfg(not(any(target_os = "android", target_os = "ios")))]
     pub fn get_permission_config(&self) -> SessionPermissionConfig {
         SessionPermissionConfig {
+            #[cfg(feature = "agent")]
+            agent: self.agent.clone(),
             lc: self.lc.clone(),
             server_keyboard_enabled: self.server_keyboard_enabled.clone(),
             server_file_transfer_enabled: self.server_file_transfer_enabled.clone(),
@@ -355,7 +365,20 @@ impl<T: InvokeUiSession> Session<T> {
     }
 
     pub fn toggle_option(&self, name: String) {
+        #[cfg(feature = "agent")]
+        let clipboard_change = ["view-only", "disable-clipboard", keys::OPTION_ENABLE_FILE_COPY_PASTE].contains(&name.as_str());
+        #[cfg(feature = "agent")]
+        let guard = if clipboard_change {
+            clipboard::access::AUTHORITY.revoke();
+            Some(self.agent.gate.lock().unwrap())
+        } else { None };
         let msg = self.lc.write().unwrap().toggle_option(name.clone());
+        #[cfg(feature = "agent")]
+        {
+            if clipboard_change { clipboard::access::AUTHORITY.revoke(); }
+            drop(guard);
+            if clipboard_change && self.agent.human_clipboard_allowed() { self.activate_human_clipboard(); }
+        }
         #[cfg(all(target_os = "windows", not(feature = "flutter")))]
         if name == keys::OPTION_ENABLE_FILE_COPY_PASTE {
             self.send(Data::ToggleClipboardFile);
@@ -388,16 +411,22 @@ impl<T: InvokeUiSession> Session<T> {
 
     #[cfg(not(target_os = "ios"))]
     pub fn is_text_clipboard_required(&self) -> bool {
-        !cfg!(feature = "agent") && *self.server_clipboard_enabled.read().unwrap()
+        #[cfg(feature = "agent")]
+        if !self.agent.human_clipboard_allowed() || clipboard::access::AUTHORITY.text_token().is_none() { return false; }
+        *self.server_clipboard_enabled.read().unwrap()
             && *self.server_keyboard_enabled.read().unwrap()
             && !self.lc.read().unwrap().disable_clipboard.v
+            && !self.lc.read().unwrap().view_only.v
     }
 
     #[cfg(any(target_os = "windows", feature = "unix-file-copy-paste"))]
     pub fn is_file_clipboard_required(&self) -> bool {
-        !cfg!(feature = "agent") && *self.server_keyboard_enabled.read().unwrap()
+        #[cfg(feature = "agent")]
+        if !self.agent.human_clipboard_allowed() || clipboard::access::AUTHORITY.file_token().is_none() { return false; }
+        *self.server_keyboard_enabled.read().unwrap()
             && *self.server_file_transfer_enabled.read().unwrap()
             && self.lc.read().unwrap().enable_file_copy_paste.v
+            && !self.lc.read().unwrap().view_only.v
     }
 
     #[cfg(feature = "flutter")]
@@ -849,6 +878,8 @@ impl<T: InvokeUiSession> Session<T> {
 
     #[cfg(not(any(target_os = "android", target_os = "ios")))]
     pub fn enter(&self, keyboard_mode: String) {
+        #[cfg(feature = "agent")]
+        self.activate_human_clipboard();
         keyboard::client::change_grab_status(GrabState::Run, &keyboard_mode);
     }
 
@@ -885,6 +916,33 @@ impl<T: InvokeUiSession> Session<T> {
         let mut msg_out = Message::new();
         msg_out.set_key_event(key_event);
         self.send(Data::Message(msg_out));
+    }
+
+    /// Physical viewer activity only; never called from MCP input/control.
+    #[cfg(feature = "agent")]
+    pub fn activate_human_clipboard(&self) {
+        if !self.is_default() { return; }
+        let gate = self.agent.gate.lock().unwrap();
+        if !gate.permits_manual(gate.epoch) { return; }
+        let lc = self.lc.read().unwrap();
+        let keyboard = *self.server_keyboard_enabled.read().unwrap() && !lc.view_only.v;
+        let text = keyboard && *self.server_clipboard_enabled.read().unwrap() && !lc.disable_clipboard.v;
+        let files = keyboard && *self.server_file_transfer_enabled.read().unwrap() && lc.enable_file_copy_paste.v;
+        let previous = clipboard::access::AUTHORITY.current();
+        if self.agent.human_clipboard_epoch.load(std::sync::atomic::Ordering::SeqCst) != gate.epoch {
+            clipboard::access::AUTHORITY.revoke();
+        }
+        let token = clipboard::access::AUTHORITY.grant(text, files);
+        let old_epoch = self.agent.human_clipboard_epoch.swap(gate.epoch, std::sync::atomic::Ordering::SeqCst);
+        if previous != token || old_epoch != gate.epoch {
+            self.send(Data::HumanClipboardState(gate.epoch, token));
+        }
+    }
+
+    #[cfg(feature = "agent")]
+    pub fn notify_human_clipboard(&self) {
+        let epoch = self.agent.gate.lock().unwrap().epoch;
+        self.send(Data::HumanClipboardState(epoch, clipboard::access::AUTHORITY.current()));
     }
 
     #[cfg(all(feature = "agent", windows))]

@@ -1,5 +1,34 @@
 # MegaRustDesk: фактический статус
 
+## 0.3.6 — человеческий двусторонний clipboard, 2026-10-27
+
+Причина отказа файлового Ctrl+V в MegaRustDesk: agent запрещал clipboard/files,
+а физический Ctrl+V поглощался текстовым Seq. Восстановлен Windows Cliprdr/OLE
+в обоих направлениях, только для активированного человеком Manual epoch.
+MCP не получает clipboard/file API и не может выдать grant. Handoff/pause/stop/
+disconnect отзывают native token; focus loss сохраняет завершение paste-out.
+Настройки мигрируют один раз на peer и затем сохраняются.
+
+Первый Ctrl+V читает актуальный человеческий snapshot. Receiver text update
+сериализован перед следующей клавишей. Файлы ждут exact operation ACK после
+OleSetClipboard: constant marker/существующий Cliprdr response, без нового proto.
+Оба клиента должны быть 0.3.6. Старый/отсутствующий/failed ACK не вставляет прежний
+буфер. Input queue: 256 событий/5 секунд; отмена — neutral releases без press/Seq.
+
+Native callback TLS и envelopes сохраняют generation; worker повторно проверяет
+epoch/token/permissions. OLE objects и waits не возобновляются после revoke/regrant.
+Viewer context при handoff не уничтожается; CM/teardown отзывает доступ до join.
+Реальные auth/data пользователя не используются тестами и не входят в пакет.
+
+Проверено до release build: cargo check; access/ACK codec 5; barrier 3; manual
+gate/text regression 17; neutral/manual protocol; native OLE synthetic paste x2
+(Unicode, каталог, два файла, 2 100 242 байта в каждом прогоне), deny/stale OLE/
+wait, sequence marker/posted apply ACK. В native fixture подменён только OS OLE
+write, пользовательский clipboard не читается. Browser viewer fixture 6/6:
+1280x800/900x600/850x500, light/dark, ownership/collapse/reclaim/paste/overflow.
+Compile, эти fixture и browser panel не подтверждают physical Explorer transfer.
+Полный двухкомпьютерный gate и multi-peer CM/global clipboard остаются UNVERIFIED.
+
 ## 0.3.5 — уточнение диагностики соединения, 2026-10-27
 
 Свежий отчёт второго физического ПК подтверждает 0.3.4, matching EXE и один main.
