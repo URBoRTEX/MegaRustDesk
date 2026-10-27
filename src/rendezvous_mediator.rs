@@ -345,6 +345,9 @@ impl RendezvousMediator {
     pub async fn start_tcp(server: ServerPtr, host: String) -> ResultType<()> {
         let host = check_port(&host, RENDEZVOUS_PORT);
         log::info!("start tcp: {}", hbb_common::websocket::check_ws(&host));
+        #[cfg(feature = "agent")]
+        let mut conn = crate::agent::network::connect_registration(host.clone(), CONNECT_TIMEOUT).await?;
+        #[cfg(not(feature = "agent"))]
         let mut conn = connect_tcp(host.clone(), CONNECT_TIMEOUT).await?;
         let key = crate::get_key(true).await;
         crate::secure_tcp(&mut conn, &key).await?;

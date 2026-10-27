@@ -22,8 +22,18 @@ pub fn public_endpoint(target: &str, proxy: bool) -> Option<String> {
 pub async fn connect_tcp(target: impl std::fmt::Display, timeout: u64) -> ResultType<Stream> {
     let raw = target.to_string();
     let mapped = public_endpoint(&raw, Config::get_socks().is_some());
-    let endpoint = mapped.as_ref().unwrap_or(&raw).clone();
+    let endpoint = endpoint_for(&raw, Config::get_socks().is_some(), false);
     let stream = socket_client::connect_tcp(endpoint, timeout).await?;
     if let Some(endpoint) = mapped { hbb_common::log::info!("Agent transport WSS connected: {endpoint}"); }
+    Ok(stream)
+}
+
+pub fn endpoint_for(target: &str, proxy: bool, registration: bool) -> String {
+    if registration { return target.to_owned(); }
+    public_endpoint(target, proxy).unwrap_or_else(|| target.to_owned())
+}
+pub async fn connect_registration(target: impl std::fmt::Display, timeout: u64) -> ResultType<Stream> {
+    let stream = socket_client::connect_tcp(endpoint_for(&target.to_string(), Config::get_socks().is_some(), true), timeout).await?;
+    if matches!(stream, Stream::Tcp(_)) { hbb_common::log::info!("Agent registration TCP connected"); }
     Ok(stream)
 }
