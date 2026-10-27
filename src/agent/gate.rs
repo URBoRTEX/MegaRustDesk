@@ -35,7 +35,7 @@ pub struct Gate {
 impl Default for Gate {
     fn default() -> Self {
         Self {
-            mode: Mode::Ready,
+            mode: Mode::Manual,
             epoch: 1,
             connected: false,
             geometry: None,
@@ -79,6 +79,9 @@ impl Gate {
     pub fn manual(&mut self) {
         self.invalidate();
         self.mode = Mode::Manual;
+    }
+    pub fn permits_manual(&self, epoch: u64) -> bool {
+        self.mode == Mode::Manual && self.connected && self.epoch == epoch
     }
     pub fn disconnect(&mut self) {
         self.pause();
@@ -135,6 +138,12 @@ impl Gate {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn new_viewer_defaults_to_manual_without_enabling_agent() {
+        let gate = Gate::default();
+        assert_eq!(gate.mode, Mode::Manual);
+        assert!(!gate.permits(gate.epoch, Instant::now()));
+    }
     fn geometry() -> Geometry {
         Geometry {
             display: 0,

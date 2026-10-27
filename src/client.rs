@@ -3665,6 +3665,8 @@ pub enum Data {
     AgentBatch(u64, Vec<Message>),
     #[cfg(feature = "agent")]
     AgentRelease(Vec<Message>),
+    #[cfg(feature = "agent")]
+    ManualText(u64, String, [bool; 8]),
     Close,
     Login((String, String, String, bool)),
     Message(Message),

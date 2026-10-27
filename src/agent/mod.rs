@@ -189,11 +189,11 @@ impl Agent {
             (g.mode, g.connected, g.geometry.map(|x| x.display))
         };
         let status = match mode {
-            Mode::Manual => "Ручное управление",
-            Mode::Ready => "Подключите внешний Codex",
-            Mode::Running => "Управление Codex разрешено",
-            Mode::Paused => "Пауза",
-            Mode::Stopped => "Остановлен",
+            Mode::Manual => "Вы управляете",
+            Mode::Ready => "Управление не передано",
+            Mode::Running => "Управляет Codex",
+            Mode::Paused => "Управление приостановлено",
+            Mode::Stopped => "Управление остановлено",
         };
         let peer = self.peer.lock().unwrap().clone();
         let messages = self.log.lock().unwrap().iter().cloned().collect::<Vec<_>>();
@@ -239,8 +239,10 @@ pub fn control(session: &Session<SciterHandler>, command: &str, _task: &str) -> 
                 gate.start().map_err(str::to_owned)?;
                 *session.agent.controller.lock().unwrap() = None;
                 session.agent.controller_pid.store(0,Ordering::SeqCst);
+                // Queue releases before MCP can acquire the newly running gate.
+                session.leave(session.get_keyboard_mode());
+                release(session);
             }
-            session.leave(session.get_keyboard_mode());
         }
         "pause" | "stop" | "manual" => {
             {

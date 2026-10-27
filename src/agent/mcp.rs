@@ -228,7 +228,7 @@ pub fn serve(session: Session<SciterHandler>) {
                             let gate=session.agent.gate.lock().unwrap();
                             let mut owner=session.agent.controller.lock().unwrap();
                             if owner.is_none() {
-                                if gate.mode!=Mode::Running || !gate.connected {return Err("Нажмите «Разрешить Codex» в окне RustDesk. Агентный ввод остановлен.".into());}
+                                if gate.mode!=Mode::Running || !gate.connected {return Err("Нажмите «Передать Codex» в окне RustDesk. Агентный ввод остановлен.".into());}
                                 let pid=req["controller_pid"].as_u64().filter(|p|*p<=u32::MAX as u64).ok_or("Missing controller process")? as u32;
                                 if !process_alive(pid){return Err("Controller process is not running".into());}
                                 *owner=Some(client.into());session.agent.controller_pid.store(pid as usize,Ordering::SeqCst);

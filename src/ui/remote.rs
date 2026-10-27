@@ -331,6 +331,13 @@ impl InvokeUiSession for SciterHandler {
             ConnType::DEFAULT_CONN => {
                 #[cfg(not(feature = "agent"))]
                 crate::keyboard::client::start_grab_loop();
+                #[cfg(all(feature = "agent", windows))]
+                if self.agent.gate.lock().unwrap().mode == crate::agent::gate::Mode::Manual {
+                    crate::keyboard::client::start_grab_loop();
+                    if let Some(e) = self.element.lock().unwrap().as_ref() {
+                        crate::platform::windows::enable_lowlevel_keyboard(e.get_hwnd(true) as _);
+                    }
+                }
             }
             _ => {}
         }
@@ -492,6 +499,7 @@ impl sciter::EventHandler for SciterSession {
         fn agent_fixture();
         fn agent_control(String, String);
         fn agent_manual();
+        fn agent_paste();
         fn get_audit_server(String);
         fn send_note(String);
         fn is_xfce();
@@ -635,7 +643,13 @@ impl SciterSession {
         {
             #[cfg(windows)]
             if self.agent.gate.lock().unwrap().mode != crate::agent::gate::Mode::Manual { crate::keyboard::client::stop_agent_keyboard(); }
-            return self.agent.status().to_string();
+            let mut status = self.agent.status();
+            status["manualPasteAllowed"] = serde_json::json!(
+                status["connected"] == true && status["mode"] == "Manual"
+                && *self.server_keyboard_enabled.read().unwrap()
+                && !self.lc.read().unwrap().get_toggle_option("view-only")
+            );
+            return status.to_string();
         }
         #[cfg(not(feature = "agent"))]
         "{}".into()
@@ -647,12 +661,15 @@ impl SciterSession {
         if self.agent_fixture() && ["start","resume","manual","login"].contains(&command.as_str()) { return "Диагностика: подключение к компьютеру не создано".into(); }
         #[cfg(feature = "agent")]
         {
+            let result = crate::agent::control(&self.0, &command, &task);
             #[cfg(windows)]
-            if let Some(e) = self.element.lock().unwrap().as_ref() {
-                if command == "manual" { crate::keyboard::client::start_grab_loop(); crate::platform::windows::enable_lowlevel_keyboard(e.get_hwnd(true) as _); }
-                else { crate::platform::windows::disable_lowlevel_keyboard(e.get_hwnd(true) as _); crate::keyboard::client::stop_agent_keyboard(); }
+            if result.is_ok() {
+                if let Some(e) = self.element.lock().unwrap().as_ref() {
+                    if self.agent_manual() { crate::keyboard::client::start_grab_loop(); crate::platform::windows::enable_lowlevel_keyboard(e.get_hwnd(true) as _); }
+                    else { crate::platform::windows::disable_lowlevel_keyboard(e.get_hwnd(true) as _); crate::keyboard::client::stop_agent_keyboard(); }
+                }
             }
-            return crate::agent::control(&self.0, &command, &task).err().unwrap_or_default();
+            return result.err().unwrap_or_default();
         }
         #[cfg(not(feature = "agent"))]
         "Агент недоступен в этой сборке".into()
@@ -663,6 +680,14 @@ impl SciterSession {
         { return self.agent.gate.lock().unwrap().mode == crate::agent::gate::Mode::Manual; }
         #[cfg(not(feature = "agent"))]
         true
+    }
+
+    fn agent_paste(&self) -> String {
+        if self.agent_fixture() { return "Диагностика: подключение к компьютеру не создано".into(); }
+        #[cfg(all(feature = "agent", windows))]
+        { return self.0.paste_local_text().err().unwrap_or_default(); }
+        #[cfg(not(all(feature = "agent", windows)))]
+        "Вставка недоступна".into()
     }
 
     fn get_custom_image_quality(&mut self) -> Value {

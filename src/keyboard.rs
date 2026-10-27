@@ -58,6 +58,9 @@ lazy_static::lazy_static! {
 pub mod client {
     use super::*;
 
+    #[cfg(all(feature = "agent", windows, not(any(feature = "flutter", feature = "cli"))))]
+    static PASTE_V_HELD: AtomicBool = AtomicBool::new(false);
+
     lazy_static::lazy_static! {
         static ref IS_GRAB_STARTED: Arc<Mutex<bool>> = Arc::new(Mutex::new(false));
     }
@@ -73,6 +76,8 @@ pub mod client {
 
     #[cfg(all(feature = "agent", windows))]
     pub fn stop_agent_keyboard() {
+        #[cfg(not(any(feature = "flutter", feature = "cli")))]
+        PASTE_V_HELD.store(false, Ordering::SeqCst);
         KEYBOARD_HOOKED.store(false, Ordering::SeqCst);
         if rdev::is_grabbed() { let _ = rdev::exit_grab(); }
         *IS_GRAB_STARTED.lock().unwrap() = false;
@@ -112,6 +117,8 @@ pub mod client {
     }
 
     pub fn process_event(keyboard_mode: &str, event: &Event, lock_modes: Option<i32>) {
+        #[cfg(all(feature = "agent", windows, not(any(feature = "flutter", feature = "cli"))))]
+        if human_paste_shortcut(event) { return; }
         let keyboard_mode = get_keyboard_mode_enum(keyboard_mode);
         if is_long_press(&event) {
             return;
@@ -120,6 +127,26 @@ pub mod client {
         for key_event in event_to_key_events(peer, &event, keyboard_mode, lock_modes) {
             send_key_event(&key_event);
         }
+    }
+
+    #[cfg(all(feature = "agent", windows, not(any(feature = "flutter", feature = "cli"))))]
+    fn human_paste_shortcut(event: &Event) -> bool {
+        let down = match event.event_type {
+            EventType::KeyPress(Key::KeyV) => true,
+            EventType::KeyRelease(Key::KeyV) => return PASTE_V_HELD.swap(false, Ordering::SeqCst),
+            _ => return false,
+        };
+        if PASTE_V_HELD.load(Ordering::SeqCst) { return down; }
+        let ctrl = get_key_state(enigo::Key::Control) || get_key_state(enigo::Key::RightControl);
+        if !ctrl || get_key_state(enigo::Key::Alt) || get_key_state(enigo::Key::RightAlt)
+            || get_key_state(enigo::Key::Meta) || get_key_state(enigo::Key::RWin) { return false; }
+        let session = CUR_SESSION.lock().unwrap().clone();
+        if let Some(session) = session {
+            PASTE_V_HELD.store(true, Ordering::SeqCst);
+            if let Err(error) = session.paste_local_text() { session.agent.message(error); }
+            return true;
+        }
+        false
     }
 
     pub fn process_event_with_session<T: InvokeUiSession>(
@@ -384,8 +411,27 @@ pub fn is_long_press(event: &Event) -> bool {
 
 pub fn release_remote_keys(keyboard_mode: &str) {
     // todo!: client quit suddenly, how to release keys?
-    let to_release = TO_RELEASE.lock().unwrap().clone();
-    TO_RELEASE.lock().unwrap().clear();
+    let to_release = std::mem::take(&mut *TO_RELEASE.lock().unwrap());
+    #[cfg(all(feature = "agent", not(any(feature = "flutter", feature = "cli"))))]
+    {
+        // Focus loss/handoff must release every held raw key even if the mode has
+        // already changed in the IO queue. This path can never press or type keys.
+        let peer=get_peer_platform().to_lowercase();
+        let mode=get_keyboard_mode_enum(keyboard_mode);
+        let mut messages=Vec::new();
+        for (key, mut event) in to_release {
+            event.event_type=EventType::KeyRelease(key);
+            for event in event_to_key_events(peer.clone(), &event, mode, None) {
+                if let Some(event)=crate::manual_input::neutral_release(event) {
+                    let mut msg=Message::new();msg.set_key_event(event);messages.push(msg);
+                }
+            }
+        }
+        let session=CUR_SESSION.lock().unwrap().clone();
+        if let Some(session)=session { crate::client::Interface::send(&session, crate::client::Data::AgentRelease(messages)); }
+        return;
+    }
+    #[cfg(not(all(feature = "agent", not(any(feature = "flutter", feature = "cli")))))]
     for (key, mut event) in to_release.into_iter() {
         event.event_type = EventType::KeyRelease(key);
         client::process_event(keyboard_mode, &event, None);

@@ -1,5 +1,45 @@
 # MegaRustDesk: фактический статус
 
+## 0.3.3 preview — управление и компактная панель, 2026-10-27
+
+По запросу владельца manual включён по умолчанию. Одна кнопка передачи Codex/возврата
+заменяет start/pause/resume/stop/manual. API pause/stop и обязательное человеческое
+разрешение агента сохраняются. Правая панель сворачивается 256→38px, увеличивая видео;
+в свёрнутом виде доступен возврат контроля. Убраны help-текст и горизонтальный scroll.
+
+Кнопка/Ctrl+V человека читает только local text clipboard и отправляет RustDesk Seq.
+До чтения проверяются Manual+connected+keyboard/view-only. ManualText связан с epoch;
+в IO разрешения проверяются перед каждым сообщением. Физические модификаторы после
+вставки восстанавливаются с учётом receiver fix_modifiers/press_modifiers.
+На handoff/focus loss известные удержанные клавиши отпускаются отдельным нейтральным
+batch, включая raw Map и Win2winHotkey Translate; текст через этот batch невозможен.
+В MCP нет clipboard-метода, автоматический clipboard sync не включён.
+
+Gate/pre-read 17/17; protobuf/Unicode/256 сочетаний модификаторов/нейтральные release
+прошли. Sciter fixture с настоящими HTML/CSS/TIS и BUTTON_CLICK: 6/6; геометрия и
+состояния Manual/Running/Paused/disconnected/error, возврат/collapse/hide/show проверены.
+Browser fixture: 6/6, 1280×800/900×600/850×500, light/dark, keyboard Enter, длинный текст;
+scrollWidth==clientWidth, JS errors 0. Для browser fixture Sciter flow заменён на flex:
+это не полный browser gate native viewer, который остаётся UNVERIFIED.
+Read-only review не обнаружил оставшихся P1/P2; runtime ревьюером не запускался.
+
+Release build: exit 0, 7m05s, runtime snapshot
+`a27a8f025f66c37639262c425336ccd205b3a3330aece0717f05e7ed9a70b4e3`.
+Первый build остановлен для исправления review; следующая попытка обнаружила missing
+Interface trait, исправленный fully-qualified вызовом. Проверки не отключались.
+Portable self-test 2/2 в путях с пробелами/кириллицей без developer PATH; 13 MCP tools,
+binding/target-switch guard прошли. Метаданные глобального Codex и PATH не изменились.
+Producer tests 6/6 и encoding 2/2 прошли. Архив содержит только allowlist без data/runtime.
+
+На 0.3.2 пользователь подтвердил подключение к 113203914; 3 последовательных чтения
+его статуса показали connected=true. Причина прежних таймаутов не установлена.
+В этой задаче сетевой код не менялся; рабочая GUI-сессия не перезапускалась.
+На физическом втором ПК вставка/новый UI ещё не проверены; clean-Windows и полный
+native/browser acceptance не завершены. buildVerified=false; cleanupCompleted=false
+из-за ранее заблокированных generated путей, перечисленных в release/retention.json.
+Ротация: current 0.3.3 preview, единственный rollback 0.3.2; receipts находятся
+в .agent-build/package-check-0.3.3.json и release/retention.json.
+
 ## 0.3.2 candidate — один главный экземпляр
 
 Обычный запуск/--noinstall выполняет проверку пакета, затем заменяет более ранние

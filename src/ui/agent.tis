@@ -1,49 +1,73 @@
-// Existing RustDesk controls/tokens; no network endpoint or protocol UI.
-var agentPanel = $(#agent-panel);
+// Existing RustDesk controls/tokens; ownership comes from the native session gate.
+var agentPanel = self.select("#agent-panel");
 var agentExit = false;
 var agentViewerVisible = true;
+var agentCollapsed = false;
 var agentLastError = "";
+
+function agentElement(id) { return self.select("#" + id); }
 
 function agentCommand(command) {
     entered = false;
     handler.leave(handler.get_keyboard_mode());
-    var error = handler.agent_control(command, "");
-    agentLastError = error || "";
-    if (error) $(#agent-status).text = error;
+    agentLastError = handler.agent_control(command, "") || "";
+    updateAgent();
+}
+
+function agentLayout() {
+    agentPanel.attributes["collapsed"] = agentCollapsed ? "true" : "false";
+    var collapse = agentElement("agent-collapse");
+    collapse.text = agentCollapsed ? "‹" : "›";
+    collapse.attributes["title"] = agentCollapsed ? "Развернуть панель" : "Свернуть панель";
+    collapse.attributes["aria-label"] = collapse.attributes["title"];
+    collapse.attributes["aria-expanded"] = agentCollapsed ? "false" : "true";
+    updateAgent();
+    // Wait for Sciter layout before updating remote image scale/coordinates.
+    agentPanel.timer(1, function() { adaptDisplay(); return false; });
 }
 
 function updateAgent() {
     try {
         var state = JSON.parse(handler.agent_status());
-        if (!state.mode || is_file_transfer || is_port_forward) { agentPanel.style#display = "none"; return true; }
-        $(#agent-status).text = agentLastError || state.status;
-        $(#agent-target).text = handler.agent_fixture() ? "Диагностика — подключение не создано" : (state.connected ? "Подключён: " : "Нет подключения: ") + state.peer;
-        $(#agent-connection).text = !state.mcpReady ? "MCP недоступен" : (state.controllerConnected ? "Codex подключён через MCP" : "Ожидание внешнего Codex");
-        $(#agent-start).state.disabled = !state.connected || state.mode == "Running";
-        $(#agent-pause).state.disabled = state.mode != "Running";
-        $(#agent-resume).state.disabled = !state.connected || (state.mode != "Paused" && state.mode != "Manual" && state.mode != "Stopped");
-        $(#agent-stop).state.disabled = state.mode == "Stopped" || state.mode == "Ready";
-    } catch(e) { $(#agent-status).text = "Не удалось получить состояние агента"; }
+        if (!state.mode || is_file_transfer || is_port_forward) { agentPanel.style["display"] = "none"; return true; }
+        var manual = state.mode == "Manual";
+        agentElement("agent-status").text = state.connected ? state.status : "Нет подключения";
+        agentElement("agent-target").text = handler.agent_fixture() ? "Диагностика — подключение не создано" : "ПК " + state.peer;
+        var toggle = agentElement("agent-start");
+        toggle.text = manual ? "Передать Codex" : "Вернуть управление";
+        toggle.state.disabled = manual && (!state.connected || !state.mcpReady);
+        agentElement("agent-paste").state.disabled = !state.connected || !manual || !state.manualPasteAllowed;
+        agentElement("agent-reclaim").style["display"] = agentCollapsed && !manual ? "block" : "none";
+        agentElement("agent-feedback").text = agentLastError;
+    } catch(e) { agentElement("agent-status").text = "Не удалось получить состояние управления"; }
     return true;
 }
 
-if (agentPanel) {
-    agentPanel.on("click", "button", function(evt) {
-        switch (this.attributes["id"]) {
-            case "agent-start": agentCommand("start"); break;
-            case "agent-pause": agentCommand("pause"); break;
-            case "agent-resume": agentCommand("resume"); break;
-            case "agent-stop": agentCommand("stop"); break;
-            case "agent-manual": agentCommand("manual"); break;
-            case "agent-viewer":
-                agentViewerVisible = !agentViewerVisible;
-                $(#video-wrapper).style#visibility = agentViewerVisible ? "visible" : "hidden";
-                this.text = agentViewerVisible ? "Скрыть просмотр" : "Показать просмотр";
-                break;
-            case "agent-exit": agentExit = true; agentCommand("exit"); view.close(); break;
+function agentButtonClick(id) {
+    switch (id) {
+        case "agent-start": {
+            // Re-read mode: ownership or connection may have changed since render.
+            var state = JSON.parse(handler.agent_status());
+            agentCommand(state.mode == "Manual" ? "start" : "manual");
+            break;
         }
-        return true;
-    });
+        case "agent-reclaim": agentCommand("manual"); break;
+        case "agent-collapse": agentCollapsed = !agentCollapsed; agentLayout(); break;
+        case "agent-paste":
+            agentLastError = handler.agent_paste() || "";
+            updateAgent();
+            break;
+        case "agent-viewer":
+            agentViewerVisible = !agentViewerVisible;
+            agentElement("video-wrapper").style["visibility"] = agentViewerVisible ? "visible" : "hidden";
+            agentElement("agent-viewer").text = agentViewerVisible ? "Скрыть просмотр" : "Показать просмотр";
+            break;
+        case "agent-exit": agentExit = true; agentCommand("exit"); view.close(); break;
+    }
+}
+
+if (agentPanel) {
+    agentPanel.on("click", "button", function(evt) { agentButtonClick(this.attributes["id"]); return true; });
     agentPanel.timer(500, updateAgent);
     updateAgent();
     if (!is_file_transfer && !is_port_forward) {

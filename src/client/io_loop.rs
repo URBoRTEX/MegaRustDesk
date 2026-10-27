@@ -538,6 +538,15 @@ impl<T: InvokeUiSession> Remote<T> {
     async fn handle_msg_from_ui(&mut self, data: Data, peer: &mut Stream) -> bool {
         match data {
             #[cfg(feature = "agent")]
+            Data::ManualText(epoch, text, held) => {
+                for msg in crate::manual_input::text_messages(text, held) {
+                    if !self.handler.agent.gate.lock().unwrap().permits_manual(epoch)
+                        || !*self.handler.server_keyboard_enabled.read().unwrap()
+                        || self.handler.lc.read().unwrap().get_toggle_option("view-only") { return true; }
+                    if peer.send(&msg).await.is_err() { return false; }
+                }
+            }
+            #[cfg(feature = "agent")]
             Data::AgentBatch(epoch, messages) => {
                 for msg in messages {
                     if !self.handler.agent.gate.lock().unwrap().permits(epoch, std::time::Instant::now()) { break; }

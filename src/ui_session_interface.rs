@@ -887,6 +887,30 @@ impl<T: InvokeUiSession> Session<T> {
         self.send(Data::Message(msg_out));
     }
 
+    #[cfg(all(feature = "agent", windows))]
+    pub fn paste_local_text(&self) -> Result<(), String> {
+        // Human UI/physical keyboard only. Never called by MCP or automatic sync.
+        let keyboard_allowed = *self.server_keyboard_enabled.read().unwrap()
+            && !self.lc.read().unwrap().get_toggle_option("view-only");
+        let mut held = [false; 8];
+        let (epoch, text) = crate::manual_input::prepare_text(
+            &self.agent.gate.lock().unwrap(), keyboard_allowed,
+            || {
+                held = [enigo::Key::Control, enigo::Key::RightControl,
+                    enigo::Key::Shift, enigo::Key::RightShift, enigo::Key::Alt,
+                    enigo::Key::RightAlt, enigo::Key::Meta, enigo::Key::RWin]
+                    .map(crate::client::get_key_state);
+                arboard::Clipboard::new()
+                .and_then(|mut clipboard| clipboard.get_text())
+                .map_err(|_| "Не удалось прочитать текст из буфера обмена".into())
+            },
+        )?;
+        self.sender.read().unwrap().as_ref()
+            .ok_or("Нет подключения к удалённому компьютеру")?
+            .send(Data::ManualText(epoch, text, held))
+            .map_err(|_| "Соединение закрыто".into())
+    }
+
     #[cfg(any(target_os = "ios"))]
     pub fn handle_flutter_raw_key_event(
         &self,
