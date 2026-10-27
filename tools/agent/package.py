@@ -5,7 +5,6 @@ import json
 import pathlib
 import shutil
 import subprocess
-import sys
 import zipfile
 from release import safe_name, verify_package
 from runtime_snapshot import verify as verify_runtime_source
@@ -35,8 +34,6 @@ def main():
     if (destination / 'data').exists():
         raise SystemExit('Staging contains runtime/user data; use the preserved source to investigate')
     shutil.copy2(executable, destination / 'RustDesk-Agent.exe')
-    subprocess.run([sys.executable, str(ROOT / 'tools/agent/make_diagnostic.py')], check=True)
-    shutil.copy2(ROOT / 'release/Проверить соединение.cmd', destination / 'Проверить соединение.cmd')
     shutil.copy2(args.build_root / 'toolchain/sciter.dll', destination / 'sciter.dll')
     inputs = json.loads((ROOT / 'tools/agent/inputs.json').read_text())
     assert sha(destination / 'sciter.dll') == inputs['sciter']['sha256'], 'Sciter runtime hash mismatch'
