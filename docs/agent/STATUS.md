@@ -29,6 +29,15 @@ write, пользовательский clipboard не читается. Browser
 Compile, эти fixture и browser panel не подтверждают physical Explorer transfer.
 Полный двухкомпьютерный gate и multi-peer CM/global clipboard остаются UNVERIFIED.
 
+Release compile завершён exit 0 за 6m31s, runtime snapshot
+`e80a1912b152229e3878c2ff3c692bb457bf154f12c891d864ed2899c5bc7329`.
+Первый compile 7m55s не был упакован: snapshot gate обнаружил добавленное во время
+компиляции сообщение ошибки; после этого выполнена полная повторная сборка.
+Ошибки вставки используют существующий custom-dialog, который не закрывает viewer;
+намеренный revoke предупреждения не показывает. Native Rust/C ABI: 216 байт,
+access callback offset 208. Полная физическая/UI приемка остаётся UNVERIFIED.
+
+
 ## 0.3.5 — уточнение диагностики соединения, 2026-10-27
 
 Свежий отчёт второго физического ПК подтверждает 0.3.4, matching EXE и один main.
