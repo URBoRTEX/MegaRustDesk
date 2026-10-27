@@ -55,31 +55,5 @@ pub fn initialize() -> Result<(), String> {
 
 #[cfg(windows)]
 unsafe fn create_process_job() -> Result<(), String> {
-    use winapi::um::{jobapi2::*, processthreadsapi::GetCurrentProcess, winnt::*};
-    let job = CreateJobObjectW(std::ptr::null_mut(), std::ptr::null());
-    if job.is_null() {
-        return Err(format!(
-            "Не создан контейнер процессов: {}",
-            std::io::Error::last_os_error()
-        ));
-    }
-    let mut limits: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = std::mem::zeroed();
-    limits.BasicLimitInformation.LimitFlags =
-        JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE | JOB_OBJECT_LIMIT_BREAKAWAY_OK;
-    if SetInformationJobObject(
-        job,
-        JobObjectExtendedLimitInformation,
-        &mut limits as *mut _ as _,
-        std::mem::size_of_val(&limits) as u32,
-    ) == 0
-        || AssignProcessToJobObject(job, GetCurrentProcess()) == 0
-    {
-        winapi::um::handleapi::CloseHandle(job);
-        return Err(format!(
-            "Не включено завершение дочерних процессов: {}",
-            std::io::Error::last_os_error()
-        ));
-    }
-    // Deliberately held until process termination. Kernel closes it even on crashes.
-    Ok(())
+    super::process_job::create()
 }

@@ -21,6 +21,11 @@ def publish(notes, publish_now, preview=False):
         target=json.loads(gh('api',f'repos/{repo}/git/tags/{target["sha"]}'))['object']
     if target['type']!='commit' or target['sha']!=payload['sourceCommit']:
         raise ValueError('Remote release tag does not match reviewed source commit')
+    # This reviewed source is also covered by the signed corresponding-source ZIP.
+    repair=ROOT/'tools/agent/repair-update.cmd'
+    if repair.is_file():
+        if repair.is_symlink(): raise ValueError('Repair script must be a plain tracked source file')
+        assets.append(repair)
     sums=ROOT/'release/SHA256SUMS.txt'
     sums.write_text(''.join(f'{sha(p)}  {p.name}\n' for p in assets),encoding='ascii')
     assets.append(sums)

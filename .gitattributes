@@ -1,1 +1,2 @@
 * text=auto
+tools/agent/repair-update.cmd text eol=crlf

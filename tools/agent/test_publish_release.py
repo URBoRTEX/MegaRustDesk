@@ -9,7 +9,7 @@ import publish_release as publisher
 
 
 class PublisherChannelTests(unittest.TestCase):
-    def publish(self, **kwargs):
+    def publish(self, with_repair=False, **kwargs):
         with tempfile.TemporaryDirectory(prefix='megarustdesk-publisher-test-') as directory:
             root = Path(directory)
             (root / 'release').mkdir()
@@ -17,6 +17,9 @@ class PublisherChannelTests(unittest.TestCase):
             asset.write_bytes(b'synthetic public payload')
             notes = root / 'notes.md'
             notes.write_text('Synthetic release', encoding='utf-8')
+            repair=root/'tools/agent/repair-update.cmd'
+            if with_repair:
+                repair.parent.mkdir(parents=True);repair.write_text('synthetic repair source',encoding='ascii')
             payload = {'repository': 'URBoRTEX/MegaRustDesk', 'tag': 'agent-v9.0.0',
                        'version': '9.0.0', 'sourceCommit': 'fixture-commit'}
             calls = []
@@ -36,6 +39,7 @@ class PublisherChannelTests(unittest.TestCase):
                     destination = Path(args[args.index('--dir') + 1])
                     shutil.copy2(asset, destination / asset.name)
                     shutil.copy2(root / 'release/SHA256SUMS.txt', destination / 'SHA256SUMS.txt')
+                    if with_repair: shutil.copy2(repair,destination/repair.name)
                 return ''
 
             with patch.object(publisher, 'ROOT', root), \
@@ -61,6 +65,12 @@ class PublisherChannelTests(unittest.TestCase):
         self.assertIn('--prerelease=true', edit)
         self.assertNotIn('--latest', edit)
         self.assertIn('preview', create[create.index('--title') + 1])
+
+    def test_repair_script_is_uploaded_and_download_verified(self):
+        calls=self.publish(with_repair=True)
+        uploads=[c for c in calls if c[:2]==('release','upload')]
+        self.assertEqual(len(uploads),3)
+        self.assertTrue(any(c[3].endswith('repair-update.cmd') for c in uploads))
 
 
 if __name__ == '__main__':

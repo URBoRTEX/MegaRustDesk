@@ -17,8 +17,7 @@ use winapi::{
     shared::minwindef::FILETIME,
     um::{
         handleapi::{CloseHandle, INVALID_HANDLE_VALUE},
-        jobapi::IsProcessInJob,
-        processthreadsapi::{GetCurrentProcess, GetProcessTimes, OpenProcess},
+        processthreadsapi::{GetProcessTimes, OpenProcess},
         synchapi::WaitForSingleObject,
         tlhelp32::{
             CreateToolhelp32Snapshot, Process32FirstW, Process32NextW, PROCESSENTRY32W,
@@ -29,7 +28,6 @@ use winapi::{
     },
 };
 const NO_WINDOW: u32 = 0x08000000;
-const BREAKAWAY: u32 = 0x01000000;
 fn normalized(path: &Path) -> String {
     path.to_string_lossy()
         .trim_start_matches(r"\\?\")
@@ -161,12 +159,18 @@ fn launch(root: &Path, work: &Path, recovery: bool) -> Result<(), String> {
     let plan = json!({"root":root,"work":work,"parentPid":std::process::id(),"parentBirth":birth(std::process::id())?,"nonce":nonce,"runnerSha256":hash,"mode":if recovery {"recover"}else{"apply"}});
     let path = work.join("plan.json");
     write(&path, &plan)?;
-    let mut child=Command::new(&runner).arg("--agent-apply-update").arg(&path).creation_flags(NO_WINDOW|BREAKAWAY).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).spawn().map_err(|_|"Windows не разрешила запустить updater вне процесса приложения. Текущая версия сохранена")?;
+    let mut child=Command::new(&runner).arg("--agent-apply-update").arg(&path).creation_flags(super::process_job::spawn_flags()).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null()).spawn().map_err(|_|"Windows не разрешила запустить updater вне процесса приложения. Текущая версия сохранена")?;
+    if let Err(error)=super::process_job::check_child(&child) {
+        let _=child.kill();let _=child.wait();return Err(error);
+    }
     let started = Instant::now();
     while started.elapsed() < Duration::from_secs(8) {
         if let Ok(value) = load(&ready, 4096) {
             if value["nonce"] == nonce && value["pid"].as_u64() == Some(child.id() as u64) {
                 if value["ok"] == true {
+                    if let Err(error)=super::process_job::check_child(&child) {
+                        let _=child.kill();let _=child.wait();return Err(error);
+                    }
                     return Ok(());
                 }
                 return Err(value["message"]
@@ -248,16 +252,6 @@ pub fn run_helper(plan_path: &Path) -> Result<(), String> {
     let mut restart_after_unlock = false;
     let result = (|| -> Result<(), String> {
         if parent != 0 {
-            let mut in_job = 0;
-            unsafe {
-                if IsProcessInJob(GetCurrentProcess(), std::ptr::null_mut(), &mut in_job) == 0
-                    || in_job != 0
-                {
-                    return Err(
-                        "Updater остался внутри Windows job. Текущая версия сохранена".into(),
-                    );
-                }
-            }
             if birth(parent)? != parent_birth
                 || image(parent)?.parent().map(normalized) != Some(normalized(&root))
             {

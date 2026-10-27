@@ -1,5 +1,34 @@
 # MegaRustDesk: фактический статус
 
+## 0.3.4 — исправление Windows job в updater, 2026-10-27
+
+Скриншот второго ПК 0.3.2 показал отказ «Updater остался внутри Windows job».
+Нативный regression воспроизвёл причину: breakaway helper вышел из собственного
+KILL_ON_CLOSE job и пережил завершение parent, но сохранил внешний non-breakaway job.
+Прежний IsProcessInJob(NULL) запрещал этот безопасный сценарий.
+Теперь parent проверяет точный child HANDLE относительно своего job после spawn и
+перед выходом GUI. Handle не наследуется; обычный child по-прежнему завершается вместе
+с app. Внешние job-политики не меняются. Recovery до создания app job не требует breakaway.
+Parent identity, ready/nonce, signed inventory, журнал, health и rollback сохранены.
+Read-only review job-fix не обнаружил P1/P2; ревьюер runtime не запускал.
+
+Старый 0.3.2/0.3.3 копирует свой EXE в runner и не получает это исправление из ZIP до
+установки. repair-update.cmd выполняет однократный offline переход: pinned старый
+verifier проверяет signed ZIP до extraction/execute; пользователь закрывает процессы
+именно этой папки; новый verified runner использует существующий operator parentPid=0.
+Никаких kill, изменения ExecutionPolicy или обращения к data. Capture stdout отключён
+у постоянного runner/GUI; verifier остаётся коротким процессом с JSON capture.
+Проверен отказ пакету ниже 0.3.4: реальные installed EXE/manifest сохранены, GUI не закрывался.
+CMD требует CRLF; это закреплено в .gitattributes. Старые cleanup-отказы не повторялись.
+
+Release compile: exit 0, 6m30s, runtime snapshot
+`e9ff4b3bccd15046895071a83c464d96729022aeaf296ad87d9ab93ee6ee5834`.
+Portable self-test: 2/2 путей, 13 MCP tools, неизменные глобальные PATH/Codex metadata.
+Producer 6/6; publisher 3/3 (включая отдельный repair asset). UI/сеть/ввод не менялись.
+Фактический результат repair перехода сохраняется отдельно в .agent-build receipts.
+На физическом втором ПК проверка ещё требует запуска пользователем; clean-Windows
+и полный native/browser gate остаются UNVERIFIED, buildVerified=false.
+
 ## Доступность обновления 0.3.3 по кнопке, 2026-10-27
 
 Причина отсутствия обновления: publisher всегда выставлял prerelease=true, а клиенты

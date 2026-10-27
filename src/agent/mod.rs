@@ -2,6 +2,8 @@
 pub mod gate;
 mod mcp;
 mod portable;
+#[cfg(windows)]
+pub mod process_job;
 mod transport;
 pub mod updater;
 mod update_manifest;
