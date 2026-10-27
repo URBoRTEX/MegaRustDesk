@@ -16,7 +16,7 @@ use hbb_common::{
     bail, base64,
     bytes::Bytes,
     config::{
-        self, keys, use_ws, Config, LocalConfig, CONNECT_TIMEOUT, READ_TIMEOUT, RENDEZVOUS_PORT,
+        self, keys, Config, LocalConfig, CONNECT_TIMEOUT, READ_TIMEOUT, RENDEZVOUS_PORT,
     },
     futures::future::join_all,
     futures_util::future::poll_fn,
@@ -709,13 +709,12 @@ async fn test_rendezvous_server_() {
     for host in servers {
         futs.push(tokio::spawn(async move {
             let tm = std::time::Instant::now();
-            if socket_client::connect_tcp(
-                crate::check_port(&host, RENDEZVOUS_PORT),
-                CONNECT_TIMEOUT,
-            )
-            .await
-            .is_ok()
-            {
+            let endpoint = crate::check_port(&host, RENDEZVOUS_PORT);
+            #[cfg(feature = "agent")]
+            let connected = crate::agent::network::connect_tcp(endpoint, CONNECT_TIMEOUT).await.is_ok();
+            #[cfg(not(feature = "agent"))]
+            let connected = socket_client::connect_tcp(endpoint, CONNECT_TIMEOUT).await.is_ok();
+            if connected {
                 let elapsed = tm.elapsed().as_micros();
                 Config::update_latency(&host, elapsed as _);
             } else {
@@ -1414,7 +1413,7 @@ pub async fn secure_tcp(conn: &mut Stream, key: &str) -> ResultType<()> {
     // as WebSocket Secure (wss://) already provides transport layer encryption.
     // This doesn't affect the end-to-end encryption between clients,
     // it only avoids redundant encryption between client and server.
-    if use_ws() {
+    if matches!(conn, Stream::WebSocket(ws) if ws.is_tls() || config::use_ws()) {
         return Ok(());
     }
     let rs_pk = get_rs_pk(key);

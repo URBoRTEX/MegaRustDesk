@@ -192,3 +192,18 @@ index 2820342..7966fb5 100644
  impl PeerConfig {
      pub fn load(id: &str) -> PeerConfig {
          let _lock = CONFIG.read().unwrap();
+diff --git a/src/websocket.rs b/src/websocket.rs
+index e317a2f..3c62f66 100644
+--- a/src/websocket.rs
++++ b/src/websocket.rs
+@@ -104,6 +104,10 @@ impl WsFramedStream {
+         self.encrypt.is_some()
+     }
+ 
++    pub fn is_tls(&self) -> bool {
++        !matches!(self.stream.get_ref(), MaybeTlsStream::Plain(_))
++    }
++
+     #[inline]
+     pub async fn send(&mut self, msg: &impl Message) -> ResultType<()> {
+         self.send_raw(msg.write_to_bytes()?).await

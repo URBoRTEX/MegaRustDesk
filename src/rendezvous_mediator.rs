@@ -20,7 +20,7 @@ use hbb_common::{
     protobuf::Message as _,
     rendezvous_proto::*,
     sleep,
-    socket_client::{self, connect_tcp, is_ipv4, new_direct_udp_for, new_udp_for},
+    socket_client::{self, is_ipv4, new_direct_udp_for, new_udp_for},
     tokio::{self, select, sync::Mutex, time::interval},
     udp::FramedSocket,
     AddrMangle, IntoTargetAddr, ResultType, Stream, TargetAddr,
@@ -32,6 +32,10 @@ use crate::{
 };
 
 type Message = RendezvousMessage;
+#[cfg(feature = "agent")]
+use crate::agent::network::connect_tcp;
+#[cfg(not(feature = "agent"))]
+use hbb_common::socket_client::connect_tcp;
 
 lazy_static::lazy_static! {
     static ref SOLVING_PK_MISMATCH: Mutex<String> = Default::default();

@@ -1,5 +1,6 @@
 //! Private per-session remote tools. This module never captures or injects into the local desktop.
 pub mod gate;
+pub mod network;
 mod mcp;
 mod portable;
 #[cfg(windows)]
@@ -43,7 +44,7 @@ pub fn network_policy() -> Value {
         && !config::option2bool("direct-server", &Config::get_option("direct-server"))
         && !config::option2bool("enable-lan-discovery", &Config::get_option("enable-lan-discovery"))
         && login.force_relay;
-    json!({"outboundRelayOnly":relay_only,"firewallPolicyChanged":false})
+    json!({"outboundRelayOnly":relay_only,"firewallPolicyChanged":false,"publicTransportPolicy":"certificate-verified-wss-unless-proxy-configured"})
 }
 
 /// Runs the real receiver startup for external socket observation, without a GUI,

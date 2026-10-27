@@ -1,5 +1,40 @@
 # MegaRustDesk: фактический статус
 
+## 0.3.8 — публичный relay через WSS/TLS, 2026-10-27
+
+На установленной 0.3.7 повторно подтверждены три неудачные попытки до пароля.
+Повтор сам по себе не устранил сбой. В собственных двухсокетных TCP probes
+короткий ASCII не покрывал реальный SignedId113: в бинарном прогоне получено
+0 raw bytes, а не частичный кадр. Причина сброса/потери внутри сети или публичного
+сервиса не установлена; конкретного провайдера/устройство блокировки не называем.
+
+Certificate-verified WSS на тех же публичных серверах прошёл Python 5/5:
+SignedId113 с новыми синтетическими ключами и 163968 точных двусторонних байт
+в каждом прогоне. Native hbb_common WSS прошёл 3/3 с тем же SignedId и объёмом,
+TLS upgrade координатора; arrival gap 200 мс задаёт порядок сторон только
+в fixture. Один simultaneous native pair до этого получил reset; production
+искусственной задержки не имеет. Ни один тест не отправляет пароль/ввод или
+не читает пользовательский clipboard.
+
+agent::network направляет только известные public endpoints через WSS/443;
+остальные адреса/порты и настроенный proxy сохраняют существующий маршрут.
+Никаких global WebSocket/API settings или новых зависимостей. secure_tcp
+пропускает только дополнительное шифрование фактического WebSocket coordinator;
+проверка TLS сертификата и peer E2E SignedId/key exchange сохраняются.
+В hbb добавлен read-only is_tls: обычный custom WebSocket без прежнего глобального
+WS-режима не считается защищённым TLS; API/settings не меняются.
+Все coordinator/relay/online/latency пути используют один wrapper.
+
+До первого peer message максимум три свежие попытки разрешены также для EOF,
+известных IO reset/abort и точного upstream WS reset без closing handshake.
+TLS/certificate, crypto/protocol и post-SignedId send failures не повторяются.
+Loopback проверяет silent relay и EOF, новый socket, security exclusions и Close.
+Диагностика v5 сохраняет WSS route и включает TCP reachability/socket metadata443.
+
+Physical acceptance требует WSS на обоих ПК: mixed WSS/TCP совместим с протоколом,
+но оставляет прежний TCP leg. До такой проверки стабильность двух ПК и файловый
+clipboard Explorer не объявляются подтверждёнными.
+
 ## 0.3.7 — восстановление до авторизации, 2026-10-27
 
 На обоих физических ПК подтверждена 0.3.6 и один main; свежий локальный журнал

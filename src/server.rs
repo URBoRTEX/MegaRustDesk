@@ -31,6 +31,10 @@ use service::{EmptyExtraFieldService, GenericService, Service, Subscriber};
 use video_service::VideoSource;
 
 use crate::ipc::Data;
+#[cfg(feature = "agent")]
+use crate::agent::network::connect_tcp;
+#[cfg(not(feature = "agent"))]
+use hbb_common::socket_client::connect_tcp;
 
 pub mod audio_service;
 #[cfg(not(any(target_os = "android", target_os = "ios")))]
@@ -289,7 +293,7 @@ async fn create_relay_connection_(
     secure: bool,
     ipv4: bool,
 ) -> ResultType<()> {
-    let mut stream = socket_client::connect_tcp(
+    let mut stream = connect_tcp(
         socket_client::ipv4_to_ipv6(crate::check_port(relay_server, RELAY_PORT), ipv4),
         CONNECT_TIMEOUT,
     )

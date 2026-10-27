@@ -58,7 +58,7 @@ use hbb_common::{
     rand,
     rendezvous_proto::*,
     sha2::{Digest, Sha256},
-    socket_client::{connect_tcp, connect_tcp_local, ipv4_to_ipv6, new_direct_udp_for},
+    socket_client::{connect_tcp_local, ipv4_to_ipv6, new_direct_udp_for},
     sodiumoxide::{base64, crypto::sign},
     timeout,
     tokio::{
@@ -73,6 +73,10 @@ use hbb_common::{
     AddrMangle, ResultType, Stream,
 };
 pub use helper::*;
+#[cfg(feature = "agent")]
+use crate::agent::network::connect_tcp;
+#[cfg(not(feature = "agent"))]
+use hbb_common::socket_client::connect_tcp;
 use scrap::{
     codec::Decoder,
     record::{Recorder, RecorderContext},
@@ -563,7 +567,8 @@ impl Client {
                         connect_futures.push(
                             async move {
                                 let conn = fut.await?;
-                                Ok((conn, None, if use_ws() { "WebSocket" } else { "Relay" }))
+                                let typ = if matches!(conn, Stream::WebSocket(_)) { "WebSocket" } else { "Relay" };
+                                Ok((conn, None, typ))
                             }
                             .boxed(),
                         );
@@ -802,7 +807,12 @@ impl Client {
             })?
         {
             Some(res) => {
-                let bytes = res.map_err(|err| anyhow!("Peer handshake receive failed: {err}"))?;
+                let bytes = res.map_err(|err| {
+                    #[cfg(feature = "agent")]
+                    { crate::connection_retry::receive_error(err, matches!(conn, Stream::WebSocket(_))) }
+                    #[cfg(not(feature = "agent"))]
+                    { anyhow!("Peer handshake receive failed: {err}") }
+                })?;
                 if let Ok(msg_in) = Message::parse_from_bytes(&bytes) {
                     if let Some(message::Union::SignedId(si)) = msg_in.union {
                         if let Ok((id, their_pk_b)) = decode_id_pk(&si.id, &sign_pk) {
@@ -841,6 +851,9 @@ impl Client {
                 }
             }
             None => {
+                #[cfg(feature = "agent")]
+                return Err(crate::connection_retry::closed_before_login());
+                #[cfg(not(feature = "agent"))]
                 bail!("Reset by the peer");
             }
         }
@@ -3998,9 +4011,12 @@ pub mod peer_online {
         log,
         rendezvous_proto::*,
         sleep,
-        socket_client::connect_tcp,
         ResultType, Stream,
     };
+    #[cfg(feature = "agent")]
+    use crate::agent::network::connect_tcp;
+    #[cfg(not(feature = "agent"))]
+    use hbb_common::socket_client::connect_tcp;
 
     pub async fn query_online_states<F: FnOnce(Vec<String>, Vec<String>)>(ids: Vec<String>, f: F) {
         let test = false;

@@ -11,6 +11,8 @@ $events=@(
     "Failed to create relay connection for 192.0.2.1:1234 with uuid ${nonce}: Peer handshake receive timed out: deadline has elapsed",
     'Peer handshake receive timed out: deadline has elapsed',
     'Relay pre-login handshake timed out; retrying attempt 2/3',
+    'Relay pre-login transport interrupted; retrying attempt 2/3',
+    'Agent transport WSS connected: wss://ovh-fr2.rustdesk.com/ws/relay',
     'Failed to create relay connection token=DO_NOT_EXPORT'
 )
 [IO.File]::WriteAllLines((Join-Path $fixture 'data/rustdesk/log/fixture.log'),$events)
@@ -26,7 +28,7 @@ try {
     $report=$raw | ConvertFrom-Json
     $hashes=@([regex]::Matches($raw,'uuidHash ([0-9a-f]{16})') | ForEach-Object {$_.Groups[1].Value})
     if($hashes.Count -ne 2 -or $hashes[0] -ne $hashes[1]){throw 'Request and failure must have the same canonical nonce hash'}
-    if($report.logEvents.Count -ne 4){throw 'Handshake stage and retry count must survive export'}
+    if($report.logEvents.Count -ne 6){throw 'Handshake stage, retry count and WSS route must survive export'}
     if($raw -match '192\.0\.2\.1|DO_NOT_EXPORT|a30b8040-e1bd'){throw 'Sensitive event data escaped redaction'}
     if($report.settingsChanged -or $report.authenticationRead){throw 'Diagnostic must remain read-only'}
     $activeRoot=Join-Path $fixture 'active'

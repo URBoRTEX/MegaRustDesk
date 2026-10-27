@@ -7,13 +7,14 @@ use std::sync::{Arc,atomic::{AtomicUsize,Ordering}};
 fn main() {
     tokio::runtime::Runtime::new().unwrap().block_on(async {
         // Real sockets: first relay leg is silent, second returns a handshake frame.
+        for early_close in [false,true] {
         let listener=TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr=listener.local_addr().unwrap();
         let accepted=Arc::new(AtomicUsize::new(0));
         let count=accepted.clone();
         let server=tokio::spawn(async move {
             let (mut first,_)=listener.accept().await.unwrap();count.fetch_add(1,Ordering::SeqCst);
-            let mut byte=[0];assert_eq!(first.read(&mut byte).await.unwrap(),0,"failed transport must be dropped before next attempt");
+            if early_close { drop(first); } else { let mut byte=[0];assert_eq!(first.read(&mut byte).await.unwrap(),0,"failed transport must be dropped before next attempt"); }
             let (mut second,_)=listener.accept().await.unwrap();count.fetch_add(1,Ordering::SeqCst);
             second.write_all(b"handshake").await.unwrap();
         });
@@ -24,12 +25,27 @@ fn main() {
                 let mut stream=TcpStream::connect(addr).await?;
                 let mut bytes=[0;9];
                 timeout(Duration::from_millis(40),stream.read_exact(&mut bytes)).await
-                    .map_err(|e|anyhow!(e).context(RelayHandshakeTimeout))??;
+                    .map_err(|e|anyhow!(e).context(RelayHandshakeTimeout))?
+                    .map_err(|e|connection_retry::receive_error(e,false))?;
                 Ok(bytes)
             }
         }).await.unwrap();
         assert_eq!(&got,b"handshake");assert_eq!(attempts,2);server.await.unwrap();
         assert_eq!(accepted.load(Ordering::SeqCst),2);
+        }
+        let mut n=0;
+        let closed=retry_before_login(||{n+=1;let number=n;async move{if number==1{Err(connection_retry::closed_before_login())}else{Ok(7)}}}).await;
+        assert_eq!(closed.unwrap(),7);assert_eq!(n,2,"EOF before first peer message must retry");
+        for (kind,text,ws) in [(std::io::ErrorKind::ConnectionReset,"reset",false),(std::io::ErrorKind::Other,"WebSocket protocol error: WebSocket protocol error: Connection reset without closing handshake",true)]{
+            let mut n=0;
+            let result=retry_before_login(||{n+=1;let number=n;async move{if number==1{Err(connection_retry::receive_error(std::io::Error::new(kind,text),ws))}else{Ok(7)}}}).await;
+            assert_eq!(result.unwrap(),7);assert_eq!(n,2);
+        }
+        for (kind,text,ws) in [(std::io::ErrorKind::InvalidData,"bad MAC",true),(std::io::ErrorKind::Other,"invalid opcode",true),(std::io::ErrorKind::Other,"Connection reset without closing handshake",false)]{
+            let mut n=0;
+            let result:ResultType<()>=retry_before_login(||{n+=1;async move{Err(connection_retry::receive_error(std::io::Error::new(kind,text),ws))}}).await;
+            assert!(result.is_err());assert_eq!(n,1,"security/unclassified protocol errors are terminal");
+        }
         let mut n=0;
         let exhausted:ResultType<()>=retry_before_login(||{n+=1;async{Err(anyhow!("deadline has elapsed").context(RelayHandshakeTimeout))}}).await;
         assert!(exhausted.is_err());assert_eq!(n,3);
