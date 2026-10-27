@@ -299,7 +299,8 @@ impl<T: InvokeUiSession> Remote<T> {
                         _ = status_timer.tick() => {
                             #[cfg(feature = "agent")]
                             if self.clipboard_paste_invalid() {
-                                self.cancel_clipboard_paste(&mut peer, "Вставка отменена: буфер не подтверждён. Обновите MegaRustDesk на обоих ПК.").await;
+                                let reason = if self.clipboard_paste_revoked() { "" } else { "Вставка отменена: буфер не подтверждён. Обновите MegaRustDesk на обоих ПК." };
+                                self.cancel_clipboard_paste(&mut peer, reason).await;
                             }
                             let elapsed = fps_instant.elapsed().as_millis();
                             if elapsed < 1000 {
@@ -579,6 +580,14 @@ impl<T: InvokeUiSession> Remote<T> {
         self.clipboard_paste.as_ref().map_or(false, |paste| {
             !gate.permits_manual(paste.epoch)
                 || paste.invalid(gate.epoch, clipboard::access::AUTHORITY.current(), std::time::Instant::now())
+        })
+    }
+
+    #[cfg(feature = "agent")]
+    fn clipboard_paste_revoked(&self) -> bool {
+        let gate = self.handler.agent.gate.lock().unwrap();
+        self.clipboard_paste.as_ref().map_or(false, |paste| {
+            !gate.permits_manual(paste.epoch) || paste.token != clipboard::access::AUTHORITY.current()
         })
     }
 
@@ -2472,7 +2481,10 @@ impl<T: InvokeUiSession> Remote<T> {
         if let clipboard::ClipboardFile::FormatListResponse { msg_flags } = &mut clip {
             let (sequence, flags) = clipboard::access::decode_apply_ack(*msg_flags);
             let accepted = flags == 1;
-            if self.clipboard_paste_invalid() { self.cancel_clipboard_paste(_peer, "Вставка отменена: разрешение изменилось или истекло ожидание.").await; }
+            if self.clipboard_paste_invalid() {
+                let reason = if self.clipboard_paste_revoked() { "" } else { "Вставка отменена: истекло ожидание применения буфера." };
+                self.cancel_clipboard_paste(_peer, reason).await;
+            }
             if let Some(paste) = self.clipboard_paste.as_mut() {
                 let epoch = paste.epoch;
                 let token = paste.token;
